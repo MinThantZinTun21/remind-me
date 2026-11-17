@@ -112,7 +112,11 @@ fun HomeScreen(app: RemindMeApp, onNewTask: () -> Unit, onEditTask: (Long) -> Un
                         TaskRow(
                             task = task,
                             overdue = section == Section.OVERDUE,
-                            due = Times.dateAndTime(context, task.due) + if (task.style == DeliveryStyle.ALARM) "  ·  Alarm" else "",
+                            due = listOfNotNull(
+                                Times.dateAndTime(context, task.due),
+                                "Alarm".takeIf { task.style == DeliveryStyle.ALARM },
+                                task.repeat.inWords(task.firstDue),
+                            ).joinToString("  ·  "),
                             onOpen = { onEditTask(task.id) },
                             onDone = { offerUndo("Marked done", app.tools.done(task.id)) },
                             onDelete = { offerUndo("Task deleted", app.tools.delete(task.id)) },

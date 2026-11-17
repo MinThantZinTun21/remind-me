@@ -7,8 +7,14 @@ import java.time.LocalDateTime
 data class Task(
     val id: Long = 0,
     val title: String,
-    /** The due time, on the phone's own clock: 9:00 stays 9:00 when the time zone changes. */
+    /**
+     * The due time, on the phone's own clock: 9:00 stays 9:00 when the time zone changes.
+     * For a repeating task this is the occurrence the list shows: the coming one, or the latest one not yet done.
+     */
     val due: LocalDateTime,
+    val repeat: RepeatRule = RepeatRule.ONCE,
+    /** The due time the owner entered, which every later occurrence of a repeating task is worked out from. */
+    val firstDue: LocalDateTime = due,
     /** Every fire at or before this moment has been delivered or deliberately skipped. */
     val handledUntil: LocalDateTime,
     val style: DeliveryStyle = DeliveryStyle.NOTIFICATION,
@@ -41,4 +47,5 @@ data class TaskDraft(
     val due: LocalDateTime,
     val style: DeliveryStyle = DeliveryStyle.NOTIFICATION,
     val leadTimes: List<Duration> = emptyList(),
+    val repeat: RepeatRule = RepeatRule.ONCE,
 )

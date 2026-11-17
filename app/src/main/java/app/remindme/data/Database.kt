@@ -16,6 +16,12 @@ data class TaskRow(
     @PrimaryKey(autoGenerate = true) val id: Long,
     val title: String,
     val due: String,
+    /** The repeat rule: its cycle, every how many, its weekdays as ISO numbers separated by commas, and its end date. */
+    val repeatCycle: String,
+    val repeatEvery: Int,
+    val repeatWeekdays: String,
+    val repeatUntil: String?,
+    val firstDue: String,
     val handledUntil: String,
     val style: String,
     /** Lead times in whole minutes, separated by commas; empty when the task has none. */

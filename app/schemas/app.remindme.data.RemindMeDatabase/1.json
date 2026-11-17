@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "eb1799b36747844dba47824601427556",
+    "identityHash": "d5c3b56534a41dae8d36f36ac48b5444",
     "entities": [
       {
         "tableName": "tasks",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `due` TEXT NOT NULL, `handledUntil` TEXT NOT NULL, `style` TEXT NOT NULL, `leadTimes` TEXT NOT NULL, `snoozedUntil` TEXT, `ringingUntil` TEXT, `doneAt` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `due` TEXT NOT NULL, `repeatCycle` TEXT NOT NULL, `repeatEvery` INTEGER NOT NULL, `repeatWeekdays` TEXT NOT NULL, `repeatUntil` TEXT, `firstDue` TEXT NOT NULL, `handledUntil` TEXT NOT NULL, `style` TEXT NOT NULL, `leadTimes` TEXT NOT NULL, `snoozedUntil` TEXT, `ringingUntil` TEXT, `doneAt` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -23,6 +23,35 @@
           {
             "fieldPath": "due",
             "columnName": "due",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repeatCycle",
+            "columnName": "repeatCycle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repeatEvery",
+            "columnName": "repeatEvery",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repeatWeekdays",
+            "columnName": "repeatWeekdays",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repeatUntil",
+            "columnName": "repeatUntil",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "firstDue",
+            "columnName": "firstDue",
             "affinity": "TEXT",
             "notNull": true
           },
@@ -130,7 +159,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'eb1799b36747844dba47824601427556')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd5c3b56534a41dae8d36f36ac48b5444')"
     ]
   }
 }

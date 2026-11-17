@@ -1,6 +1,7 @@
 package app.remindme.core
 
 import java.time.Duration
+import java.time.LocalDateTime
 
 /** What a tool hands back: the task as it now stands, or a refusal the owner (or the agent) can read. */
 sealed interface ToolResult {
@@ -23,12 +24,15 @@ class Tools(
     fun create(draft: TaskDraft): ToolResult {
         val now = clock.now()
         refusal(draft)?.let { return it }
-        if (draft.due <= now) return ToolResult.Refused(ALREADY_PASSED)
+        // A repeating task begins at its first occurrence after now, even when the owner entered an earlier day.
+        val due = draft.repeat.occurrenceAfter(draft.due, now) ?: return noOccurrence(draft)
         // Starting the watermark at now is what skips a warning whose moment has already passed.
         val task = store.put(
             Task(
                 title = draft.title.trim(),
-                due = draft.due,
+                due = due,
+                repeat = draft.repeat,
+                firstDue = draft.due,
                 handledUntil = now,
                 style = draft.style,
                 leadTimes = draft.leadTimes.sortedDescending(),
@@ -39,9 +43,10 @@ class Tools(
     }
 
     /**
-     * Changes a task. Moving the due time starts the task afresh from now: fires from before the edit
-     * are dropped, along with any snooze. An overdue task can keep its due time while the rest changes.
-     * Either way nothing whose moment has already passed is fired because of an edit.
+     * Changes a task. Moving the due time or changing how it repeats starts the task afresh from now: fires
+     * from before the edit are dropped, along with any snooze, and a repeating task is worked out from the
+     * new due time. An overdue task can keep its due time while the rest changes. Either way nothing whose
+     * moment has already passed is fired because of an edit.
      */
     @Synchronized
     fun update(id: Long, draft: TaskDraft): ToolResult {
@@ -54,12 +59,23 @@ class Tools(
             leadTimes = draft.leadTimes.sortedDescending(),
             handledUntil = maxOf(task.handledUntil, now),
         )
-        val edited = if (draft.due == task.due) {
-            changed
+        // The form shows a repeating task's current occurrence, so an unchanged due time means "leave the days alone".
+        val sameDays = draft.due == task.due && draft.repeat.copy(until = null) == task.repeat.copy(until = null)
+        val edited = if (sameDays) {
+            val until = draft.repeat.until
+            if (until != null && task.due > now && task.due.toLocalDate() > until) return ToolResult.Refused(RULE_ENDED)
+            changed.copy(repeat = draft.repeat)
         } else {
-            if (draft.due <= now) return ToolResult.Refused(ALREADY_PASSED)
+            val due = draft.repeat.occurrenceAfter(draft.due, now) ?: return noOccurrence(draft)
             announcer.clear(id)
-            changed.copy(due = draft.due, handledUntil = now, snoozedUntil = null, ringingUntil = null)
+            changed.copy(
+                due = due,
+                repeat = draft.repeat,
+                firstDue = draft.due,
+                handledUntil = now,
+                snoozedUntil = null,
+                ringingUntil = null,
+            )
         }
         schedule(store.put(edited))
         return ToolResult.Ok(edited)
@@ -71,8 +87,14 @@ class Tools(
         draft.leadTimes.size > 2 -> ToolResult.Refused("A task can have at most two lead times.")
         draft.leadTimes.distinct().size < draft.leadTimes.size -> ToolResult.Refused("The two lead times are the same.")
         draft.leadTimes.any { it < Duration.ofMinutes(1) } -> ToolResult.Refused("A lead time has to be at least one minute.")
+        draft.repeat.cycle == RepeatRule.Cycle.WEEKDAYS && draft.repeat.weekdays.isEmpty() ->
+            ToolResult.Refused("Pick at least one weekday.")
+        draft.repeat.every < 1 -> ToolResult.Refused("A task repeats every 1 or more.")
         else -> null
     }
+
+    /** Why a draft has no occurrence left after now. */
+    private fun noOccurrence(draft: TaskDraft) = ToolResult.Refused(if (draft.repeat.repeats) RULE_ENDED else ALREADY_PASSED)
 
     /** Removes a task and its fires. Returns the task as it was, for [restore] to undo, or null when there is none. */
     @Synchronized
@@ -95,13 +117,26 @@ class Tools(
     fun list(): List<Task> = store.all().filter { it.doneAt == null }.sortedBy { it.due }
 
     /**
-     * The owner says they did it. Returns the task as it was just before, for [restore] to undo,
-     * or null when there is no such task still to do.
+     * The owner says they did it. A one-time task leaves the list. A repeating task moves to its next
+     * occurrence: done before the due time skips the coming occurrence, and after the last occurrence the
+     * task is gone. Returns the task as it was just before, for [restore] to undo, or null when there is no
+     * such task still to do.
      */
     @Synchronized
     fun done(id: Long): Task? {
         val task = store.get(id)?.takeIf { it.doneAt == null } ?: return null
-        schedule(store.put(task.copy(doneAt = clock.now(), ringingUntil = null)))
+        val now = clock.now()
+        if (!task.repeat.repeats) {
+            schedule(store.put(task.copy(doneAt = now, ringingUntil = null)))
+            announcer.clear(id)
+            return task
+        }
+        val next = task.repeat.occurrenceAfter(task.firstDue, maxOf(task.due, now)) ?: return delete(id)
+        schedule(
+            store.put(
+                task.copy(due = next, handledUntil = maxOf(task.handledUntil, now), snoozedUntil = null, ringingUntil = null),
+            ),
+        )
         announcer.clear(id)
         return task
     }
@@ -128,22 +163,42 @@ class Tools(
         val task = store.get(fire.taskId) ?: return
         // The alarm system can deliver a fire the app has already caught up on, or one from before an edit.
         if (fire !in pendingFires(task)) return
-        deliver(task, fire, caughtUp = false)
+        // The first fire of the next occurrence is what moves a repeating task on to it.
+        val startsNext = fire.kind in OCCURRENCE_FIRES && fire.at > task.due
+        deliver(if (startsNext) task.movedTo(nextDue(task)!!) else task, fire, caughtUp = false)
     }
 
     /**
      * Hands every pending fire to the alarm system again. Called when the phone starts, when the clock or
      * the time zone changes, when the app is updated and when it is opened. A fire that came due meanwhile
-     * is announced now, once, as late.
+     * is announced now, once, as late: for a repeating task, only the latest occurrence that was missed.
      */
     @Synchronized
     fun reschedule() {
         val now = clock.now()
-        for (task in store.all()) {
+        for (stored in store.all()) {
+            val task = occurrenceReachedBy(stored, now)
             val missed = pendingFires(task).filter { it.at <= now }.maxByOrNull { it.at }
             if (missed != null) deliver(task, missed, caughtUp = true) else schedule(task)
         }
     }
+
+    /** The task moved on past every occurrence that began (with a warning or its due time) while nothing was delivered. */
+    private fun occurrenceReachedBy(task: Task, now: LocalDateTime): Task {
+        if (task.doneAt != null) return task
+        var current = task
+        while (true) {
+            val next = nextDue(current) ?: return current
+            val begun = occurrenceFires(current, next).any { it.at > current.due && it.at > current.handledUntil && it.at <= now }
+            if (!begun) return current
+            current = current.movedTo(next)
+        }
+    }
+
+    private fun nextDue(task: Task): LocalDateTime? = task.repeat.occurrenceAfter(task.firstDue, task.due)
+
+    /** The next occurrence replaces the one before it: an unanswered occurrence and its snooze are dropped. */
+    private fun Task.movedTo(next: LocalDateTime) = copy(due = next, snoozedUntil = null, ringingUntil = null)
 
     private fun deliver(task: Task, fire: Fire, caughtUp: Boolean) {
         val handledUntil = maxOf(task.handledUntil, fire.at)
@@ -176,16 +231,27 @@ class Tools(
         scheduler.replace(task.id, pendingFires(task), clock.zone())
     }
 
+    /**
+     * The fires still to come. Only one occurrence of a repeating task is planned at a time: the next one's
+     * fires join once the current occurrence's due time has been dealt with.
+     */
     private fun pendingFires(task: Task): List<Fire> {
         if (task.doneAt != null) return emptyList()
-        return listOfNotNull(
-            task.leadTimes.getOrNull(0)?.let { Fire(task.id, FireKind.WARNING_1, task.due.minus(it)) },
-            task.leadTimes.getOrNull(1)?.let { Fire(task.id, FireKind.WARNING_2, task.due.minus(it)) },
-            Fire(task.id, FireKind.DUE, task.due),
+        val answers = listOfNotNull(
             task.snoozedUntil?.let { Fire(task.id, FireKind.SNOOZE, it) },
             task.ringingUntil?.let { Fire(task.id, FireKind.RING_END, it) },
-        ).filter { it.at > task.handledUntil }
+        )
+        val next = if (task.handledUntil >= task.due) nextDue(task) else null
+        return (occurrenceFires(task, task.due) + answers + next?.let { occurrenceFires(task, it) }.orEmpty())
+            .filter { it.at > task.handledUntil }
     }
+
+    /** The warnings and the due-time fire of the occurrence due at [due]. */
+    private fun occurrenceFires(task: Task, due: LocalDateTime): List<Fire> = listOfNotNull(
+        task.leadTimes.getOrNull(0)?.let { Fire(task.id, FireKind.WARNING_1, due.minus(it)) },
+        task.leadTimes.getOrNull(1)?.let { Fire(task.id, FireKind.WARNING_2, due.minus(it)) },
+        Fire(task.id, FireKind.DUE, due),
+    )
 
     private fun leadTimeOf(task: Task, kind: FireKind): Duration? = when (kind) {
         FireKind.WARNING_1 -> task.leadTimes.getOrNull(0)
@@ -202,5 +268,7 @@ class Tools(
         const val NEEDS_TITLE = "A task needs a title."
         const val ALREADY_PASSED = "That due time has already passed."
         const val NO_SUCH_TASK = "That task is no longer on the list."
+        const val RULE_ENDED = "That repeat rule ends before its first occurrence."
+        val OCCURRENCE_FIRES = setOf(FireKind.WARNING_1, FireKind.WARNING_2, FireKind.DUE)
     }
 }

@@ -4,10 +4,13 @@ import app.remindme.core.DeliveryStyle
 import app.remindme.core.FireKind
 import app.remindme.core.FireLog
 import app.remindme.core.FireRecord
+import app.remindme.core.RepeatRule
 import app.remindme.core.Task
 import app.remindme.core.TaskStore
+import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 class RoomTaskStore(private val dao: TaskDao, private val onChange: () -> Unit) : TaskStore {
@@ -30,6 +33,13 @@ class RoomTaskStore(private val dao: TaskDao, private val onChange: () -> Unit) 
         id = id,
         title = title,
         due = LocalDateTime.parse(due),
+        repeat = RepeatRule(
+            cycle = RepeatRule.Cycle.valueOf(repeatCycle),
+            every = repeatEvery,
+            weekdays = repeatWeekdays.split(',').filter { it.isNotEmpty() }.map { DayOfWeek.of(it.toInt()) }.toSet(),
+            until = repeatUntil?.let(LocalDate::parse),
+        ),
+        firstDue = LocalDateTime.parse(firstDue),
         handledUntil = LocalDateTime.parse(handledUntil),
         style = DeliveryStyle.valueOf(style),
         leadTimes = leadTimes.split(',').filter { it.isNotEmpty() }.map { Duration.ofMinutes(it.toLong()) },
@@ -42,6 +52,11 @@ class RoomTaskStore(private val dao: TaskDao, private val onChange: () -> Unit) 
         id = id,
         title = title,
         due = due.toString(),
+        repeatCycle = repeat.cycle.name,
+        repeatEvery = repeat.every,
+        repeatWeekdays = repeat.weekdays.sorted().joinToString(",") { it.value.toString() },
+        repeatUntil = repeat.until?.toString(),
+        firstDue = firstDue.toString(),
         handledUntil = handledUntil.toString(),
         style = style.name,
         leadTimes = leadTimes.joinToString(",") { it.toMinutes().toString() },

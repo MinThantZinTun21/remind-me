@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import android.text.format.DateFormat
 import app.remindme.RemindMeApp
 import app.remindme.core.DeliveryStyle
+import app.remindme.core.RepeatRule
 import app.remindme.core.TaskDraft
 import app.remindme.core.ToolResult
 import java.time.Duration
@@ -72,13 +73,21 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
     var time by remember(taskId) { mutableStateOf(start.toLocalTime()) }
     var style by remember(taskId) { mutableStateOf(editing?.style ?: DeliveryStyle.NOTIFICATION) }
     var leadTimes by remember(taskId) { mutableStateOf(editing?.leadTimes ?: emptyList()) }
+    var repeat by remember(taskId) { mutableStateOf(RepeatEntry.of(editing?.repeat ?: RepeatRule.ONCE)) }
     var pickingLeadTime by remember { mutableStateOf(false) }
+    var pickingEndDate by remember { mutableStateOf(false) }
     var refusal by remember { mutableStateOf<String?>(null) }
     var pickingDate by remember { mutableStateOf(false) }
     var pickingTime by remember { mutableStateOf(false) }
 
     fun save() {
-        val draft = TaskDraft(title = title, due = LocalDateTime.of(date, time), style = style, leadTimes = leadTimes)
+        val draft = TaskDraft(
+            title = title,
+            due = LocalDateTime.of(date, time),
+            style = style,
+            leadTimes = leadTimes,
+            repeat = repeat.rule(),
+        )
         when (val result = if (editing == null) app.tools.create(draft) else app.tools.update(editing.id, draft)) {
             is ToolResult.Ok -> onClose()
             is ToolResult.Refused -> refusal = result.reason
@@ -138,6 +147,12 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
                 onChange = { leadTimes = it; refusal = null },
                 onCustom = { pickingLeadTime = true },
             )
+            RepeatField(
+                entry = repeat,
+                date = date,
+                onChange = { repeat = it; refusal = null },
+                onPickEndDate = { pickingEndDate = true },
+            )
         }
     }
 
@@ -153,20 +168,19 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
     }
 
     if (pickingDate) {
-        val state = rememberDatePickerState(
-            initialSelectedDateMillis = date.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
+        PickDateDialog(
+            start = date,
+            onPicked = { date = it; refusal = null; pickingDate = false },
+            onDismiss = { pickingDate = false },
         )
-        DatePickerDialog(
-            onDismissRequest = { pickingDate = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    state.selectedDateMillis?.let { date = Instant.ofEpochMilli(it).atOffset(ZoneOffset.UTC).toLocalDate() }
-                    refusal = null
-                    pickingDate = false
-                }) { Text("OK") }
-            },
-            dismissButton = { TextButton(onClick = { pickingDate = false }) { Text("Cancel") } },
-        ) { DatePicker(state) }
+    }
+
+    if (pickingEndDate) {
+        PickDateDialog(
+            start = repeat.until ?: date,
+            onPicked = { repeat = repeat.copy(until = it); refusal = null; pickingEndDate = false },
+            onDismiss = { pickingEndDate = false },
+        )
     }
 
     if (pickingTime) {
@@ -188,6 +202,24 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
             text = { TimePicker(state) },
         )
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PickDateDialog(start: LocalDate, onPicked: (LocalDate) -> Unit, onDismiss: () -> Unit) {
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = start.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                state.selectedDateMillis?.let { onPicked(Instant.ofEpochMilli(it).atOffset(ZoneOffset.UTC).toLocalDate()) }
+                    ?: onDismiss()
+            }) { Text("OK") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    ) { DatePicker(state) }
 }
 
 private val presetLeadTimes = listOf(
