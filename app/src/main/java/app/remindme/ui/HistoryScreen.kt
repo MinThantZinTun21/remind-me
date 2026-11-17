@@ -37,7 +37,7 @@ fun HistoryScreen(app: RemindMeApp, onClose: () -> Unit) {
     ) { padding ->
         if (done.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
-                Text("Nothing done yet. A task you mark done stays here for 30 days.")
+                Text("Nothing here. A task you mark done stays here for 30 days.")
             }
         } else {
             LazyColumn(Modifier.fillMaxSize().padding(padding)) {

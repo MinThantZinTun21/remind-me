@@ -2,6 +2,8 @@ package app.remindme.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -26,7 +28,9 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,7 +61,9 @@ fun HomeScreen(
     app: RemindMeApp,
     onNewTask: () -> Unit,
     onEditTask: (Long) -> Unit,
+    notificationsOff: Boolean,
     onHistory: () -> Unit,
+    onSetUp: () -> Unit,
     onFireLog: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -91,6 +97,7 @@ fun HomeScreen(
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Menu") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(text = { Text("History") }, onClick = { menuOpen = false; onHistory() })
+                        DropdownMenuItem(text = { Text("Set-up") }, onClick = { menuOpen = false; onSetUp() })
                         DropdownMenuItem(text = { Text("Fire log") }, onClick = { menuOpen = false; onFireLog() })
                     }
                 },
@@ -105,34 +112,52 @@ fun HomeScreen(
             )
         },
     ) { padding ->
-        if (tasks.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("No tasks yet. Tap “New task” to add one.", style = MaterialTheme.typography.bodyLarge)
-            }
-        } else {
-            val sections = tasks.groupBy { it.section(now) }
-            LazyColumn(Modifier.fillMaxSize().padding(padding)) {
-                for (section in Section.entries) {
-                    val inSection = sections[section] ?: continue
-                    item(key = section.name) { SectionHeading(section) }
-                    items(inSection, key = { it.id }) { task ->
-                        TaskRow(
-                            task = task,
-                            overdue = section == Section.OVERDUE,
-                            due = listOfNotNull(
-                                Times.dateAndTime(context, task.due),
-                                "Alarm".takeIf { task.style == DeliveryStyle.ALARM },
-                                task.repeat.inWords(task.firstDue),
-                            ).joinToString("  ·  "),
-                            onOpen = { onEditTask(task.id) },
-                            onDone = { offerUndo("Marked done", app.tools.done(task.id)) },
-                            onDelete = { offerUndo("Task deleted", app.tools.delete(task.id)) },
-                        )
-                        HorizontalDivider()
-                    }
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (notificationsOff) NotificationsOffWarning(onSetUp)
+            if (tasks.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No tasks yet. Tap “New task” to add one.", style = MaterialTheme.typography.bodyLarge)
                 }
-                item { Box(Modifier.padding(bottom = 88.dp)) }
+            } else {
+                val sections = tasks.groupBy { it.section(now) }
+                LazyColumn(Modifier.fillMaxSize()) {
+                    for (section in Section.entries) {
+                        val inSection = sections[section] ?: continue
+                        item(key = section.name) { SectionHeading(section) }
+                        items(inSection, key = { it.id }) { task ->
+                            TaskRow(
+                                task = task,
+                                overdue = section == Section.OVERDUE,
+                                due = listOfNotNull(
+                                    Times.dateAndTime(context, task.due),
+                                    "Alarm".takeIf { task.style == DeliveryStyle.ALARM },
+                                    task.repeat.inWords(task.firstDue),
+                                ).joinToString("  ·  "),
+                                onOpen = { onEditTask(task.id) },
+                                onDone = { offerUndo("Marked done", app.tools.done(task.id)) },
+                                onDelete = { offerUndo("Task deleted", app.tools.delete(task.id)) },
+                            )
+                            HorizontalDivider()
+                        }
+                    }
+                    item { Box(Modifier.padding(bottom = 88.dp)) }
+                }
             }
+        }
+    }
+}
+
+/** Shown for as long as the phone will not let the app notify: nothing it fires would be seen or heard. */
+@Composable
+private fun NotificationsOffWarning(onSetUp: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Notifications are off, so Remind Me cannot tell you when a task is due.",
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onSetUp) { Text("Open Set-up") }
         }
     }
 }

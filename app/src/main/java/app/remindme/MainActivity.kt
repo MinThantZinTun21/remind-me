@@ -1,6 +1,5 @@
 package app.remindme
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -8,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import app.remindme.ui.RemindMeScreens
 
@@ -15,18 +15,24 @@ class MainActivity : ComponentActivity() {
     /** The task a tapped notification asked to open, until the screens have shown it. */
     private val taskToOpen = mutableStateOf<Long?>(null)
 
+    /** Counts the owner's returns to the app, so the screens look again at settings that are changed elsewhere. */
+    private val resumes = mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Until the set-up checklist exists, ask for the one permission a notification needs.
-        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
         if (savedInstanceState == null) taskToOpen.value = taskIn(intent)
-        setContent { RemindMeScreens(RemindMeApp.from(this), taskToOpen) }
+        setContent { RemindMeScreens(RemindMeApp.from(this), taskToOpen, resumes) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         taskToOpen.value = taskIn(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumes.intValue++
     }
 
     override fun onStart() {
