@@ -54,7 +54,7 @@ interface FireScheduler {
     fun replace(taskId: Long, fires: Map<Fire, Instant>, ringEnd: Instant?)
 }
 
-/** What the user is told when a fire is delivered. */
+/** What the user is told when a fire is delivered, or when a ring nobody answered gives up. */
 data class Announcement(
     val taskId: Long,
     val title: String,

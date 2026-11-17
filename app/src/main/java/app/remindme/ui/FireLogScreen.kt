@@ -55,7 +55,8 @@ fun FireLogScreen(app: RemindMeApp, onClose: () -> Unit) {
 
 /** How long after its moment a fire arrived: "0.4 s behind", "3 min behind", "2 h 5 min behind". */
 private fun behind(lateness: Duration): String {
-    val seconds = lateness.toMillis() / 1000.0
+    // A fire a moment ahead of the clock reads as on time.
+    val seconds = lateness.toMillis().coerceAtLeast(0) / 1000.0
     return when {
         seconds < 60 -> String.format(Locale.ENGLISH, "%.1f s behind", seconds)
         seconds < 3600 -> "${lateness.toMinutes()} min behind"

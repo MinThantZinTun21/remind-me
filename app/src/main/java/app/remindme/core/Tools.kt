@@ -14,9 +14,10 @@ sealed interface ToolResult {
 }
 
 /**
- * The only way anything changes a task. The manual form, the notification buttons, the alarm screen
+ * The only way the user changes a task. The manual form, the notification buttons, the alarm screen
  * and (in the second build) the agent all go through here. What the phone then says, and when, is
- * for [Fires] to work out.
+ * for [Fires] to work out, which also moves a repeating task on when its next occurrence fires and
+ * clears out old history.
  */
 class Tools(
     private val store: TaskStore,
@@ -52,7 +53,7 @@ class Tools(
      * moment has already passed is fired because of an edit.
      */
     fun update(id: Long, details: TaskDetails): ToolResult = exclusively {
-        val task = toDo(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
+        val task = onTheList(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
         val now = clock.now()
         refusal(details)?.let { return it }
         val changed = task.copy(
@@ -128,7 +129,7 @@ class Tools(
     fun notDone(id: Long): ToolResult = exclusively {
         val now = clock.now()
         val task = store.get(id)?.takeIf { it.inHistory(now) } ?: return ToolResult.Refused(NOT_IN_HISTORY)
-        saved(task.copy(doneAt = null, snoozedUntil = null, handledUntil = maxOf(task.handledUntil, now)))
+        saved(task.copy(doneAt = null, handledUntil = maxOf(task.handledUntil, now)))
     }
 
     /**
@@ -137,13 +138,13 @@ class Tools(
      * task is gone.
      */
     fun done(id: Long): ToolResult = exclusively {
-        val task = toDo(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
+        val task = onTheList(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
         val now = clock.now()
         val after = if (task.repeat.repeats) {
             val next = task.repeat.occurrenceAfter(task.firstDue, maxOf(task.due, now)) ?: return delete(id)
             task.movedTo(next).copy(handledUntil = maxOf(task.handledUntil, now))
         } else {
-            task.copy(doneAt = now, ringingUntil = null)
+            task.quiet().copy(doneAt = now)
         }
         announcer.clear(id)
         saved(after)
@@ -151,14 +152,14 @@ class Tools(
 
     /** The user asks to be told about the occurrence again in ten minutes. The due time does not move. */
     fun snooze(id: Long): ToolResult = exclusively {
-        val task = toDo(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
+        val task = onTheList(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
         announcer.clear(id)
         saved(task.copy(snoozedUntil = clock.instant().plus(SNOOZE_LENGTH), ringingUntil = null))
     }
 
     /** The user silences the task without saying it is done: it stays overdue and says nothing more. */
     fun stop(id: Long): ToolResult = exclusively {
-        val task = toDo(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
+        val task = onTheList(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
         announcer.clear(id)
         saved(task.quiet())
     }
@@ -167,7 +168,7 @@ class Tools(
     private fun saved(task: Task): ToolResult.Ok = ToolResult.Ok(store.put(task).also(fires::schedule))
 
     /** The task with this id, when it is still to do. */
-    private fun toDo(id: Long): Task? = store.get(id)?.takeIf { it.doneAt == null }
+    private fun onTheList(id: Long): Task? = store.get(id)?.takeIf { it.doneAt == null }
 
     /** Tools and fires change the same tasks, so they take turns. */
     private inline fun <T> exclusively(block: () -> T): T = synchronized(fires, block)

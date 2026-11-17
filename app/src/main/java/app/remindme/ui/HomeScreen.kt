@@ -49,7 +49,6 @@ import app.remindme.RemindMeApp
 import app.remindme.wording.Times
 import app.remindme.wording.label
 import app.remindme.wording.inWords
-import app.remindme.core.DeliveryStyle
 import app.remindme.core.Section
 import app.remindme.core.Task
 import app.remindme.core.ToolResult
@@ -134,7 +133,7 @@ fun HomeScreen(
                                 overdue = section == Section.OVERDUE,
                                 due = listOfNotNull(
                                     Times.dateAndTime(context, task.due),
-                                    task.style.label.takeIf { task.style == DeliveryStyle.ALARM },
+                                    task.style.label,
                                     task.repeat.inWords(task.firstDue),
                                 ).joinToString("  ·  "),
                                 onOpen = { onEditTask(task.id) },
