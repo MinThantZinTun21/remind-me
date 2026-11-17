@@ -5,16 +5,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import android.graphics.drawable.Icon
 import android.util.Log
 import app.remindme.MainActivity
 import app.remindme.R
 import app.remindme.core.Announcement
+import app.remindme.core.Announcement.Form
 import app.remindme.core.Announcer
-import app.remindme.ui.Times
-import app.remindme.ui.inWords
+import app.remindme.wording.Times
+import app.remindme.wording.inWords
 
-/** Tells the owner on the phone: a notification, or a ring handed to [RingService]. */
+/** Tells the user on the phone: a notification, or a ring handed to [RingService]. */
 class NotificationAnnouncer(private val context: Context) : Announcer {
     private val notifications = context.getSystemService(NotificationManager::class.java)
 
@@ -25,7 +25,7 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
     }
 
     override fun announce(announcement: Announcement) {
-        if (announcement.ring && ring(announcement)) return
+        if (announcement.form == Form.Ring && ring(announcement)) return
         silence(announcement.taskId)
         notify(announcement)
     }
@@ -35,9 +35,9 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
         notifications.cancel(taskId.toInt())
     }
 
-    /** Starts the ring. Returns false when the phone refuses, so the owner at least gets a notification. */
+    /** Starts the ring. Returns false when the phone refuses, so the user at least gets a notification. */
     private fun ring(announcement: Announcement): Boolean {
-        Ringing.add(RingingTask(announcement.taskId, announcement.title, announcement.due))
+        Ringing.add(announcement)
         return try {
             RingService.sync(context)
             notifications.cancel(announcement.taskId.toInt())
@@ -61,32 +61,30 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
             MainActivity.openTask(context, taskId),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        // An early warning, given on time, leads with how long is left; it offers Done but no Snooze.
-        val warning = announcement.leadTime?.takeUnless { announcement.late }
+        val form = announcement.form
+        val due = announcement.due
+        val (title, text) = when (form) {
+            is Form.Warning ->
+                (if (form.onTime) "In ${form.leadTime.inWords()}: ${announcement.title}" else announcement.title) to
+                    "Due ${Times.dateAndTime(context, due)}"
+            Form.WasDue -> announcement.title to "Was due ${Times.dateAndTime(context, due)}"
+            // A ring the phone refused is told as the notification it would have been.
+            Form.DueNow, Form.Ring -> announcement.title to "Due ${Times.time(context, due)}"
+        }
         val builder = Notification.Builder(context, CHANNEL_NOTIFICATIONS)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(if (warning == null) announcement.title else "In ${warning.inWords()}: ${announcement.title}")
-            .setContentText(wording(announcement))
+            .setContentTitle(title)
+            .setContentText(text)
             .setCategory(Notification.CATEGORY_REMINDER)
             .setShowWhen(true)
             .setContentIntent(open)
             .setAutoCancel(true)
-            .addAction(action("Done", AnswerReceiver.ACTION_DONE, taskId))
+            .addAction(AnswerReceiver.doneButton(context, taskId))
             // Swiping the notification away is Stop: the task stays as it is, overdue once its due time passes.
             .setDeleteIntent(AnswerReceiver.intent(context, AnswerReceiver.ACTION_STOP, taskId))
-        if (announcement.leadTime == null) builder.addAction(action("Snooze 10 min", AnswerReceiver.ACTION_SNOOZE, taskId))
-        val notification = builder.build()
-        notifications.notify(taskId.toInt(), notification)
-    }
-
-    private fun action(label: String, action: String, taskId: Long): Notification.Action =
-        Notification.Action.Builder(null as Icon?, label, AnswerReceiver.intent(context, action, taskId)).build()
-
-    private fun wording(announcement: Announcement): String = when {
-        // Before the due time: an early warning, on time or late.
-        announcement.leadTime != null -> "Due ${Times.dateAndTime(context, announcement.due)}"
-        announcement.late -> "Was due ${Times.dateAndTime(context, announcement.due)}"
-        else -> "Due ${Times.time(context, announcement.due)}"
+        // An early warning offers Done but no Snooze.
+        if (form !is Form.Warning) builder.addAction(AnswerReceiver.snoozeButton(context, taskId))
+        notifications.notify(taskId.toInt(), builder.build())
     }
 
     private companion object {

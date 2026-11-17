@@ -15,7 +15,7 @@ class MainActivity : ComponentActivity() {
     /** The task a tapped notification asked to open, until the screens have shown it. */
     private val taskToOpen = mutableStateOf<Long?>(null)
 
-    /** Counts the owner's returns to the app, so the screens look again at settings that are changed elsewhere. */
+    /** Counts the user's returns to the app, so the screens look again at settings that are changed elsewhere. */
     private val resumes = mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         // Opening the app is one more chance to put back anything the phone dropped.
-        RemindMeApp.from(this).tools.reschedule()
+        RemindMeApp.from(this).fires.reschedule()
     }
 
     private fun taskIn(intent: Intent): Long? =

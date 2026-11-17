@@ -37,7 +37,7 @@ import app.remindme.setup.SetUp
 
 /**
  * The set-up checklist. On first run it stands in front of the app until notifications are allowed;
- * later it opens from the home menu. [resumes] changes each time the owner comes back to the app,
+ * later it opens from the home menu. [resumes] changes each time the user comes back to the app,
  * which is when a setting may have changed on a system screen.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,7 +90,7 @@ fun SetUpScreen(setUp: SetUp, resumes: Int, firstRun: Boolean, onClose: () -> Un
                 why = "Switch Remind Me on in the Auto-start list, so the phone lets it start again after a restart.",
             ) {
                 OutlinedButton(onClick = { setUp.openAutoStart(activity) }) { Text("Open Auto-start") }
-                OwnerTick(autoStartTicked) { autoStartTicked = it; setUp.autoStartTicked = it }
+                UserTick(autoStartTicked) { autoStartTicked = it; setUp.autoStartTicked = it }
             }
             SetUpItem(
                 title = "3. Battery",
@@ -106,7 +106,7 @@ fun SetUpScreen(setUp: SetUp, resumes: Int, firstRun: Boolean, onClose: () -> Un
                 good = lockedTicked,
                 why = "Open recent apps, press and hold the Remind Me card and choose Lock, so clearing recent apps does not close it.",
             ) {
-                OwnerTick(lockedTicked) { lockedTicked = it; setUp.lockedInRecentsTicked = it }
+                UserTick(lockedTicked) { lockedTicked = it; setUp.lockedInRecentsTicked = it }
             }
             if (firstRun) {
                 Button(onClick = onClose, enabled = notificationsOn, modifier = Modifier.fillMaxWidth()) {
@@ -152,9 +152,9 @@ private fun SetUpItem(
     }
 }
 
-/** For a setting the app cannot read: the owner says it is done. */
+/** For a setting the app cannot read: the user says it is done. */
 @Composable
-private fun OwnerTick(ticked: Boolean, onChange: (Boolean) -> Unit) {
+private fun UserTick(ticked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.toggleable(value = ticked, role = Role.Checkbox, onValueChange = onChange).padding(end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

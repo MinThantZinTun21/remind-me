@@ -1,9 +1,7 @@
 package app.remindme.fire
 
 import androidx.compose.runtime.mutableStateListOf
-import java.time.LocalDateTime
-
-data class RingingTask(val taskId: Long, val title: String, val due: LocalDateTime)
+import app.remindme.core.Announcement
 
 /**
  * The alarms ringing right now, oldest first. Kept in memory only: if the process dies the ring dies with
@@ -11,13 +9,13 @@ data class RingingTask(val taskId: Long, val title: String, val due: LocalDateTi
  * Touched on the main thread only.
  */
 object Ringing {
-    val tasks = mutableStateListOf<RingingTask>()
+    val alarms = mutableStateListOf<Announcement>()
 
-    fun add(task: RingingTask) {
-        remove(task.taskId)
-        tasks += task
+    fun add(alarm: Announcement) {
+        remove(alarm.taskId)
+        alarms += alarm
     }
 
     /** Returns true when the task was ringing. */
-    fun remove(taskId: Long): Boolean = tasks.removeAll { it.taskId == taskId }
+    fun remove(taskId: Long): Boolean = alarms.removeAll { it.taskId == taskId }
 }

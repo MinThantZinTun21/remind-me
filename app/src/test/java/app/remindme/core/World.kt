@@ -11,7 +11,8 @@ class World(now: String, zone: String = "Asia/Yangon") {
     val scheduler = RecordingScheduler()
     val announcer = RecordingAnnouncer()
     val fireLog = RecordingFireLog()
-    val tools = Tools(store, scheduler, announcer, fireLog, clock)
+    val fires = Fires(store, scheduler, announcer, fireLog, clock)
+    val tools = Tools(store, fires, announcer, clock)
 
     /** Move the clock to [time], delivering every scheduled fire that comes due on the way, in order. */
     fun advanceTo(time: String) {
@@ -20,7 +21,7 @@ class World(now: String, zone: String = "Asia/Yangon") {
             val next = scheduler.pending().filter { it.at <= target }.minByOrNull { it.at } ?: break
             if (next.at > clock.local) clock.local = next.at
             scheduler.remove(next)
-            tools.fire(next)
+            fires.deliver(next)
         }
         clock.local = target
     }
@@ -29,11 +30,17 @@ class World(now: String, zone: String = "Asia/Yangon") {
     fun restartPhoneAt(time: String) {
         clock.local = at(time)
         scheduler.wipe()
-        tools.reschedule()
+        fires.reschedule()
     }
 }
 
 fun at(time: String): LocalDateTime = LocalDateTime.parse(time)
+
+val Announcement.rings: Boolean get() = form == Announcement.Form.Ring
+val Announcement.saysWasDue: Boolean get() = form == Announcement.Form.WasDue
+
+/** The lead time of an early warning; null for every other announcement. */
+val Announcement.leadTime get() = (form as? Announcement.Form.Warning)?.leadTime
 
 class FakeClock(var local: LocalDateTime, var zoneId: ZoneId) : Clock {
     override fun instant(): Instant = local.atZone(zoneId).toInstant()
@@ -85,7 +92,7 @@ class RecordingAnnouncer : Announcer {
 
     override fun announce(announcement: Announcement) {
         announced += announcement
-        if (announcement.ring) ringing += announcement.taskId else ringing -= announcement.taskId
+        if (announcement.rings) ringing += announcement.taskId else ringing -= announcement.taskId
     }
     override fun clear(taskId: Long) {
         cleared += taskId

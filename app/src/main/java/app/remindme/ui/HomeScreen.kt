@@ -46,9 +46,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.remindme.RemindMeApp
+import app.remindme.wording.Times
+import app.remindme.wording.inWords
 import app.remindme.core.DeliveryStyle
 import app.remindme.core.Section
 import app.remindme.core.Task
+import app.remindme.core.ToolResult
 import app.remindme.core.section
 import java.time.LocalDateTime
 import kotlinx.coroutines.delay
@@ -79,9 +82,9 @@ fun HomeScreen(
     val undoBar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    /** Shows the Undo bar for something that has already happened; Undo puts [before] back. */
-    fun offerUndo(message: String, before: Task?) {
-        if (before == null) return
+    /** Shows the Undo bar once a tool has changed a task; Undo puts the task back as it was [before]. */
+    fun offerUndo(message: String, before: Task, result: ToolResult) {
+        if (result !is ToolResult.Ok) return
         scope.launch {
             undoBar.currentSnackbarData?.dismiss()
             val answer = undoBar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Long)
@@ -134,8 +137,8 @@ fun HomeScreen(
                                     task.repeat.inWords(task.firstDue),
                                 ).joinToString("  ·  "),
                                 onOpen = { onEditTask(task.id) },
-                                onDone = { offerUndo("Marked done", app.tools.done(task.id)) },
-                                onDelete = { offerUndo("Task deleted", app.tools.delete(task.id)) },
+                                onDone = { offerUndo("Marked done", task, app.tools.done(task.id)) },
+                                onDelete = { offerUndo("Task deleted", task, app.tools.delete(task.id)) },
                             )
                             HorizontalDivider()
                         }

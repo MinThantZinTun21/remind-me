@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "d5c3b56534a41dae8d36f36ac48b5444",
+    "identityHash": "4dd732d1d6fc1a36e9d87f787f310f5f",
     "entities": [
       {
         "tableName": "tasks",
@@ -98,7 +98,7 @@
       },
       {
         "tableName": "fire_log",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `taskId` INTEGER NOT NULL, `title` TEXT NOT NULL, `kind` TEXT NOT NULL, `scheduledFor` TEXT NOT NULL, `deliveredAtMillis` INTEGER NOT NULL, `lateMillis` INTEGER NOT NULL, `caughtUp` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `taskId` INTEGER NOT NULL, `title` TEXT NOT NULL, `kind` TEXT NOT NULL, `scheduledFor` TEXT NOT NULL, `deliveredAtMillis` INTEGER NOT NULL, `latenessMillis` INTEGER NOT NULL, `caughtUp` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -137,8 +137,8 @@
             "notNull": true
           },
           {
-            "fieldPath": "lateMillis",
-            "columnName": "lateMillis",
+            "fieldPath": "latenessMillis",
+            "columnName": "latenessMillis",
             "affinity": "INTEGER",
             "notNull": true
           },
@@ -159,7 +159,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd5c3b56534a41dae8d36f36ac48b5444')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4dd732d1d6fc1a36e9d87f787f310f5f')"
     ]
   }
 }

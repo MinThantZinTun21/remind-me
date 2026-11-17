@@ -16,7 +16,7 @@ class RepeatTest {
         repeat: RepeatRule,
         leadTimes: List<Duration> = emptyList(),
         title: String = "Take the pills",
-    ): Task = tools.create(TaskDraft(title = title, due = at(due), repeat = repeat, leadTimes = leadTimes)).task()
+    ): Task = tools.create(TaskDetails(title = title, due = at(due), repeat = repeat, leadTimes = leadTimes)).task()
 
     private fun World.currentDue() = tools.list().single().due
 
@@ -177,8 +177,8 @@ class RepeatTest {
         val world = World(now = "2026-11-17T10:00")
         val task = world.repeating("2026-11-17T15:00", RepeatRule.daily(until = LocalDate.parse("2026-11-17")))
 
-        val before = world.tools.done(task.id)!!
-        world.tools.restore(before)
+        world.tools.done(task.id)
+        world.tools.restore(task)
 
         assertEquals(listOf(task), world.tools.list())
         assertEquals(listOf(Fire(task.id, FireKind.DUE, at("2026-11-17T15:00"))), world.scheduler.pending())
@@ -228,13 +228,13 @@ class RepeatTest {
 
         val told = world.announcer.announced.single()
         assertEquals(at("2026-11-20T09:00"), told.due)
-        assertTrue(told.late)
+        assertTrue(told.saysWasDue)
         assertEquals(at("2026-11-20T09:00"), world.currentDue())
         assertEquals(listOf(Fire(task.id, FireKind.DUE, at("2026-11-21T09:00"))), world.scheduler.pending())
     }
 
     @Test
-    fun `when the latest missed fire is the next occurrence's warning the task moves on to that occurrence`() {
+    fun `when the latest fire to come due while the phone was off is the next occurrence's warning the task moves on to that occurrence`() {
         val world = World(now = "2026-11-17T07:00")
         val task = world.repeating("2026-11-17T09:00", RepeatRule.daily(), leadTimes = listOf(Duration.ofHours(1)))
 
@@ -254,7 +254,7 @@ class RepeatTest {
 
         world.tools.update(
             task.id,
-            TaskDraft(title = "Take the pills", due = at("2026-11-17T18:00"), repeat = RepeatRule.everyDays(2)),
+            TaskDetails(title = "Take the pills", due = at("2026-11-17T18:00"), repeat = RepeatRule.everyDays(2)),
         )
 
         assertEquals(listOf(Fire(task.id, FireKind.DUE, at("2026-11-17T18:00"))), world.scheduler.pending())
@@ -270,7 +270,7 @@ class RepeatTest {
         world.tools.done(task.id)
         assertEquals(at("2027-02-28T09:00"), world.currentDue())
 
-        world.tools.update(task.id, TaskDraft(title = "Pay the rent", due = at("2027-02-28T09:00"), repeat = RepeatRule.monthly()))
+        world.tools.update(task.id, TaskDetails(title = "Pay the rent", due = at("2027-02-28T09:00"), repeat = RepeatRule.monthly()))
 
         assertEquals(listOf(at("2027-03-31T09:00")), world.dueAfterEachDone(task, 1))
     }
@@ -282,7 +282,7 @@ class RepeatTest {
         world.tools.done(task.id)
         val endOfApril = RepeatRule.monthly(until = LocalDate.parse("2027-04-30"))
 
-        world.tools.update(task.id, TaskDraft(title = "Take the pills", due = at("2027-02-28T09:00"), repeat = endOfApril))
+        world.tools.update(task.id, TaskDetails(title = "Take the pills", due = at("2027-02-28T09:00"), repeat = endOfApril))
 
         assertEquals(listOf(at("2027-03-31T09:00"), at("2027-04-30T09:00")), world.dueAfterEachDone(task, 2))
         world.tools.done(task.id)
@@ -292,11 +292,11 @@ class RepeatTest {
     @Test
     fun `a one-time task can be made to repeat`() {
         val world = World(now = "2026-11-17T10:00")
-        val task = world.tools.create(TaskDraft(title = "Water the plants", due = at("2026-11-17T15:00"))).task()
+        val task = world.tools.create(TaskDetails(title = "Water the plants", due = at("2026-11-17T15:00"))).task()
 
         world.tools.update(
             task.id,
-            TaskDraft(title = "Water the plants", due = at("2026-11-17T15:00"), repeat = RepeatRule.everyWeeks(1)),
+            TaskDetails(title = "Water the plants", due = at("2026-11-17T15:00"), repeat = RepeatRule.everyWeeks(1)),
         )
 
         assertEquals(listOf(at("2026-11-24T15:00")), world.dueAfterEachDone(task, 1))
@@ -310,7 +310,7 @@ class RepeatTest {
 
         world.clock.zoneId = ZoneId.of("Asia/Tokyo")
         world.clock.local = at("2026-11-17T11:31")
-        world.tools.reschedule()
+        world.fires.reschedule()
 
         assertEquals(listOf(Instant.parse("2026-11-18T00:00:00Z")), world.scheduler.pendingInstants())
     }
@@ -319,7 +319,7 @@ class RepeatTest {
     fun `rules that cannot produce an occurrence are refused`() {
         val world = World(now = "2026-11-17T10:00")
         fun refusal(repeat: RepeatRule) =
-            world.tools.create(TaskDraft(title = "Take the pills", due = at("2026-11-17T15:00"), repeat = repeat))
+            world.tools.create(TaskDetails(title = "Take the pills", due = at("2026-11-17T15:00"), repeat = repeat))
 
         assertEquals(ToolResult.Refused("Pick at least one weekday."), refusal(RepeatRule.weekdays(emptySet())))
         assertEquals(ToolResult.Refused("A task repeats every 1 or more."), refusal(RepeatRule.everyDays(0)))
@@ -328,5 +328,56 @@ class RepeatTest {
             refusal(RepeatRule.daily(until = LocalDate.parse("2026-11-16"))),
         )
         assertEquals(emptyList<Task>(), world.tools.list())
+    }
+
+    @Test
+    fun `done on a repeating task hands back the task at its next occurrence`() {
+        val world = World(now = "2026-11-17T10:00")
+        val task = world.repeating("2026-11-17T15:00", RepeatRule.daily())
+
+        assertEquals(at("2026-11-18T15:00"), world.tools.done(task.id).task().due)
+    }
+
+    @Test
+    fun `changing only the time of a monthly task on the 31st keeps it on the 31st`() {
+        val world = World(now = "2027-02-01T10:00")
+        val task = world.repeating("2027-01-31T09:00", RepeatRule.monthly())
+        assertEquals(at("2027-02-28T09:00"), task.due)
+
+        val edited = world.tools.update(
+            task.id,
+            TaskDetails(title = task.title, due = at("2027-02-28T10:00"), repeat = RepeatRule.monthly()),
+        ).task()
+
+        assertEquals(at("2027-02-28T10:00"), edited.due)
+        assertEquals(
+            listOf(at("2027-03-31T10:00"), at("2027-04-30T10:00"), at("2027-05-31T10:00")),
+            world.dueAfterEachDone(task, times = 3),
+        )
+    }
+
+    @Test
+    fun `changing only the time of a yearly 29 February task keeps it on leap day`() {
+        val world = World(now = "2029-01-10T10:00")
+        val task = world.repeating("2028-02-29T09:00", RepeatRule.yearly())
+        assertEquals(at("2029-02-28T09:00"), task.due)
+
+        world.tools.update(task.id, TaskDetails(title = task.title, due = at("2029-02-28T08:00"), repeat = RepeatRule.yearly()))
+
+        assertEquals(
+            listOf(at("2030-02-28T08:00"), at("2031-02-28T08:00"), at("2032-02-29T08:00")),
+            world.dueAfterEachDone(task, times = 3),
+        )
+    }
+
+    @Test
+    fun `moving a monthly task to another day counts from that day`() {
+        val world = World(now = "2027-02-01T10:00")
+        val task = world.repeating("2027-01-31T09:00", RepeatRule.monthly())
+
+        world.tools.update(task.id, TaskDetails(title = task.title, due = at("2027-02-27T09:00"), repeat = RepeatRule.monthly()))
+
+        assertEquals(at("2027-02-27T09:00"), world.currentDue())
+        assertEquals(listOf(at("2027-03-27T09:00"), at("2027-04-27T09:00")), world.dueAfterEachDone(task, times = 2))
     }
 }

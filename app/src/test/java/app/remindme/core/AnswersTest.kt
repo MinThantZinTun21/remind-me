@@ -6,7 +6,7 @@ import org.junit.Test
 class AnswersTest {
     private fun worldWithTaskDueAt3pm(): Pair<World, Task> {
         val world = World(now = "2026-11-17T10:00")
-        val task = world.tools.create(TaskDraft(title = "Call the bank", due = at("2026-11-17T15:00"))).task()
+        val task = world.tools.create(TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00"))).task()
         return world to task
     }
 
@@ -100,10 +100,10 @@ class AnswersTest {
     @Test
     fun `tasks fall into overdue, today, tomorrow and later`() {
         val world = World(now = "2026-11-17T10:00")
-        world.tools.create(TaskDraft(title = "Past", due = at("2026-11-17T10:01")))
-        world.tools.create(TaskDraft(title = "Tonight", due = at("2026-11-17T23:59")))
-        world.tools.create(TaskDraft(title = "Next morning", due = at("2026-11-18T00:00")))
-        world.tools.create(TaskDraft(title = "Next week", due = at("2026-11-24T09:00")))
+        world.tools.create(TaskDetails(title = "Past", due = at("2026-11-17T10:01")))
+        world.tools.create(TaskDetails(title = "Tonight", due = at("2026-11-17T23:59")))
+        world.tools.create(TaskDetails(title = "Next morning", due = at("2026-11-18T00:00")))
+        world.tools.create(TaskDetails(title = "Next week", due = at("2026-11-24T09:00")))
         world.advanceTo("2026-11-17T10:05")
 
         val sections = world.tools.list().associate { it.title to it.section(world.clock.now()) }
@@ -124,11 +124,11 @@ class AnswersTest {
         val (world, task) = worldWithTaskDueAt3pm()
         val oldFire = world.scheduler.pending().single()
 
-        world.tools.update(task.id, TaskDraft(title = "Call the bank", due = at("2026-11-17T17:00")))
+        world.tools.update(task.id, TaskDetails(title = "Call the bank", due = at("2026-11-17T17:00")))
 
         assertEquals(listOf(Fire(task.id, FireKind.DUE, at("2026-11-17T17:00"))), world.scheduler.pending())
         world.clock.local = at("2026-11-17T15:00")
-        world.tools.fire(oldFire)
+        world.fires.deliver(oldFire)
         assertEquals(emptyList<Announcement>(), world.announcer.announced)
         world.advanceTo("2026-11-17T17:00")
         assertEquals(1, world.announcer.announced.size)
@@ -140,7 +140,7 @@ class AnswersTest {
         world.advanceTo("2026-11-17T15:30")
         world.tools.snooze(task.id)
 
-        world.tools.update(task.id, TaskDraft(title = "Call the bank tomorrow", due = at("2026-11-18T09:00")))
+        world.tools.update(task.id, TaskDetails(title = "Call the bank tomorrow", due = at("2026-11-18T09:00")))
 
         val edited = world.tools.list().single()
         assertEquals("Call the bank tomorrow", edited.title)
@@ -154,11 +154,11 @@ class AnswersTest {
 
         assertEquals(
             ToolResult.Refused("A task needs a title."),
-            world.tools.update(task.id, TaskDraft(title = "", due = at("2026-11-17T17:00"))),
+            world.tools.update(task.id, TaskDetails(title = "", due = at("2026-11-17T17:00"))),
         )
         assertEquals(
             ToolResult.Refused("That due time has already passed."),
-            world.tools.update(task.id, TaskDraft(title = "Call the bank", due = at("2026-11-17T09:00"))),
+            world.tools.update(task.id, TaskDetails(title = "Call the bank", due = at("2026-11-17T09:00"))),
         )
         assertEquals(task, world.tools.list().single())
     }
@@ -168,7 +168,7 @@ class AnswersTest {
         val (world, task) = worldWithTaskDueAt3pm()
         world.advanceTo("2026-11-17T15:30")
 
-        val result = world.tools.update(task.id, TaskDraft(title = "Call the bank about the card", due = task.due))
+        val result = world.tools.update(task.id, TaskDetails(title = "Call the bank about the card", due = task.due))
 
         assertEquals("Call the bank about the card", result.task().title)
         assertEquals(Section.OVERDUE, world.tools.list().single().section(world.clock.now()))
@@ -179,7 +179,7 @@ class AnswersTest {
     fun `delete removes the task and its fires, and undo brings both back`() {
         val (world, task) = worldWithTaskDueAt3pm()
 
-        val deleted = world.tools.delete(task.id)!!
+        val deleted = world.tools.delete(task.id).task()
         assertEquals(emptyList<Task>(), world.tools.list())
         assertEquals(emptyList<Fire>(), world.scheduler.pending())
 
@@ -192,11 +192,35 @@ class AnswersTest {
     fun `undoing done puts the task back as it was`() {
         val (world, task) = worldWithTaskDueAt3pm()
 
-        val before = world.tools.done(task.id)!!
-        world.tools.restore(before)
+        world.tools.done(task.id)
+        world.tools.restore(task)
 
         assertEquals(listOf(task), world.tools.list())
         world.advanceTo("2026-11-17T15:00")
         assertEquals(1, world.announcer.announced.size)
+    }
+
+    @Test
+    fun `done, snooze and stop hand back the task as it now stands`() {
+        val (world, task) = worldWithTaskDueAt3pm()
+        world.advanceTo("2026-11-17T15:05")
+
+        assertEquals(task.id, world.tools.snooze(task.id).task().id)
+        assertEquals(task.id, world.tools.stop(task.id).task().id)
+        assertEquals(at("2026-11-17T15:05"), world.tools.done(task.id).task().doneAt)
+    }
+
+    @Test
+    fun `every tool refuses a task that is not on the list, and says why`() {
+        val (world, task) = worldWithTaskDueAt3pm()
+        world.tools.done(task.id)
+        val gone = ToolResult.Refused("That task is no longer on the list.")
+
+        assertEquals(gone, world.tools.done(task.id))
+        assertEquals(gone, world.tools.snooze(task.id))
+        assertEquals(gone, world.tools.stop(task.id))
+        assertEquals(gone, world.tools.update(task.id, TaskDetails(title = "Call the bank", due = at("2026-11-18T15:00"))))
+        assertEquals(gone, world.tools.delete(99))
+        assertEquals(ToolResult.Refused("That task is not in history."), world.tools.notDone(99))
     }
 }

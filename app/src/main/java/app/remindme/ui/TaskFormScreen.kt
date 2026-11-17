@@ -47,8 +47,11 @@ import android.text.format.DateFormat
 import app.remindme.RemindMeApp
 import app.remindme.core.DeliveryStyle
 import app.remindme.core.RepeatRule
-import app.remindme.core.TaskDraft
+import app.remindme.wording.Times
+import app.remindme.wording.inWords
+import app.remindme.core.TaskDetails
 import app.remindme.core.ToolResult
+import app.remindme.core.anchorFor
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -56,7 +59,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneOffset
 
-/** The manual form: the owner's way to create a task by hand, or to change the one with [taskId]. */
+/** The manual form: the user's way to create a task by hand, or to change the one with [taskId]. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
@@ -80,15 +83,16 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
     var pickingDate by remember { mutableStateOf(false) }
     var pickingTime by remember { mutableStateOf(false) }
 
+    val details = TaskDetails(
+        title = title,
+        due = LocalDateTime.of(date, time),
+        style = style,
+        leadTimes = leadTimes,
+        repeat = repeat.rule(),
+    )
+
     fun save() {
-        val draft = TaskDraft(
-            title = title,
-            due = LocalDateTime.of(date, time),
-            style = style,
-            leadTimes = leadTimes,
-            repeat = repeat.rule(),
-        )
-        when (val result = if (editing == null) app.tools.create(draft) else app.tools.update(editing.id, draft)) {
+        when (val result = if (editing == null) app.tools.create(details) else app.tools.update(editing.id, details)) {
             is ToolResult.Ok -> onClose()
             is ToolResult.Refused -> refusal = result.reason
         }
@@ -149,7 +153,8 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
             )
             RepeatField(
                 entry = repeat,
-                date = date,
+                // A task whose days are not being moved still counts from the date it was first given.
+                countedFrom = (editing?.anchorFor(details) ?: details.due).toLocalDate(),
                 onChange = { repeat = it; refusal = null },
                 onPickEndDate = { pickingEndDate = true },
             )

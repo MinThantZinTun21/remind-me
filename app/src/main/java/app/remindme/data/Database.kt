@@ -26,6 +26,7 @@ data class TaskRow(
     val style: String,
     /** Lead times in whole minutes, separated by commas; empty when the task has none. */
     val leadTimes: String,
+    /** Moments, written out in full: a fire is matched against them exactly when it arrives. */
     val snoozedUntil: String?,
     val ringingUntil: String?,
     val doneAt: String?,
@@ -39,7 +40,7 @@ data class FireLogRow(
     val kind: String,
     val scheduledFor: String,
     val deliveredAtMillis: Long,
-    val lateMillis: Long,
+    val latenessMillis: Long,
     val caughtUp: Boolean,
 )
 
@@ -79,7 +80,7 @@ abstract class RemindMeDatabase : RoomDatabase() {
     companion object {
         /**
          * The database lives in device-protected storage so a fire can be delivered after a restart,
-         * before the owner has unlocked the phone (docs/adr/0003).
+         * before the user has unlocked the phone (docs/adr/0003).
          *
          * Queries run on the calling thread on purpose. The data is a handful of rows, and a fire has to be
          * fully handled before its broadcast receiver returns: HiOS freezes this process five seconds after

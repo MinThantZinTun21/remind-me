@@ -35,8 +35,8 @@ fun RemindMeTheme(content: @Composable () -> Unit) {
 }
 
 /**
- * [taskToOpen] is set when the owner taps a notification; the screens show that task and clear it.
- * [resumes] changes each time the owner comes back to the app.
+ * [taskToOpen] is set when the user taps a notification; the screens show that task and clear it.
+ * [resumes] changes each time the user comes back to the app.
  */
 @Composable
 fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>, resumes: IntState) {

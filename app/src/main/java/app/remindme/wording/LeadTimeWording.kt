@@ -1,4 +1,4 @@
-package app.remindme.ui
+package app.remindme.wording
 
 import java.time.Duration
 

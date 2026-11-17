@@ -12,7 +12,7 @@ import app.remindme.RemindMeApp
 class RescheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in ACTIONS) return
-        RemindMeApp.from(context).tools.reschedule()
+        RemindMeApp.from(context).fires.reschedule()
     }
 
     private companion object {

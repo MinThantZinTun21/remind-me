@@ -1,6 +1,7 @@
 package app.remindme.core
 
 import java.time.DayOfWeek
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
@@ -8,12 +9,12 @@ import java.time.temporal.ChronoUnit
 /**
  * How a task comes round again. See GLOSSARY.md.
  *
- * Every occurrence is worked out from the first due time the owner entered (the anchor), never from the
+ * Every occurrence is worked out from the first due time the user entered (the anchor), never from the
  * occurrence before it, so a task due on the 31st goes back to the 31st after a shorter month.
  */
 data class RepeatRule(
     val cycle: Cycle,
-    /** Every how many days, weeks, months or years. */
+    /** Every how many days or weeks, for the two cycles that count them. */
     val every: Int = 1,
     /** The days of the week a [Cycle.WEEKDAYS] task falls on. */
     val weekdays: Set<DayOfWeek> = emptySet(),
@@ -24,15 +25,29 @@ data class RepeatRule(
 
     val repeats: Boolean get() = cycle != Cycle.ONCE
 
+    /** True when [other] puts a task on the same days, whatever day either of them ends. */
+    fun sameDaysAs(other: RepeatRule): Boolean = copy(until = null) == other.copy(until = null)
+
+    /** The least time there can be between one occurrence and the next; null for a task that happens once. */
+    fun shortestGap(): Duration? = when (cycle) {
+        Cycle.ONCE -> null
+        Cycle.DAYS -> Duration.ofDays(every.toLong())
+        Cycle.WEEKS -> Duration.ofDays(7L * every)
+        // From the end of January to the end of a 28-day February.
+        Cycle.MONTHLY -> Duration.ofDays(28)
+        Cycle.YEARLY -> Duration.ofDays(365)
+        Cycle.WEEKDAYS -> weekdays.minOfOrNull { day -> (1L..7L).first { day.plus(it) in weekdays } }?.let(Duration::ofDays)
+    }
+
     /** The first occurrence strictly after [moment], or null when the rule has none left. */
     fun occurrenceAfter(anchor: LocalDateTime, moment: LocalDateTime): LocalDateTime? {
         val found = when (cycle) {
             Cycle.ONCE -> anchor.takeIf { it > moment }
-            Cycle.DAYS -> firstAfter(moment, ChronoUnit.DAYS.between(anchor, moment)) { anchor.plusDays(it * every) }
-            Cycle.WEEKS -> firstAfter(moment, ChronoUnit.WEEKS.between(anchor, moment)) { anchor.plusWeeks(it * every) }
-            // plusMonths and plusYears fall back to the month's last day when it is too short: 31 Jan, 28 Feb, 31 Mar.
-            Cycle.MONTHLY -> firstAfter(moment, ChronoUnit.MONTHS.between(anchor, moment)) { anchor.plusMonths(it * every) }
-            Cycle.YEARLY -> firstAfter(moment, ChronoUnit.YEARS.between(anchor, moment)) { anchor.plusYears(it * every) }
+            Cycle.DAYS -> stepped(anchor, moment, ChronoUnit.DAYS, every)
+            Cycle.WEEKS -> stepped(anchor, moment, ChronoUnit.WEEKS, every)
+            // Adding months or years falls back to the month's last day when it is too short: 31 Jan, 28 Feb, 31 Mar.
+            Cycle.MONTHLY -> stepped(anchor, moment, ChronoUnit.MONTHS, 1)
+            Cycle.YEARLY -> stepped(anchor, moment, ChronoUnit.YEARS, 1)
             Cycle.WEEKDAYS -> {
                 val from = maxOf(anchor.toLocalDate(), moment.toLocalDate())
                 // Eight days reach the same weekday a week on, for when today's time has already gone.
@@ -43,12 +58,12 @@ data class RepeatRule(
         return found?.takeIf { until == null || !it.toLocalDate().isAfter(until) }
     }
 
-    /** [periods] is how many whole days, weeks, months or years lie between the anchor and [moment]. */
-    private fun firstAfter(moment: LocalDateTime, periods: Long, occurrence: (Long) -> LocalDateTime): LocalDateTime {
+    /** The first of anchor, anchor + [size] units, anchor + 2 × [size] units… that comes after [moment]. */
+    private fun stepped(anchor: LocalDateTime, moment: LocalDateTime, unit: ChronoUnit, size: Int): LocalDateTime {
         // Start one step short of the estimate: month and year counts can come out one low around short months.
-        var step = maxOf(0, periods / every - 1)
-        while (occurrence(step) <= moment) step++
-        return occurrence(step)
+        var step = maxOf(0, unit.between(anchor, moment) / size - 1)
+        while (anchor.plus(step * size, unit) <= moment) step++
+        return anchor.plus(step * size, unit)
     }
 
     companion object {

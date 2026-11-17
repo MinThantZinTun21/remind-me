@@ -1,4 +1,4 @@
-package app.remindme.ui
+package app.remindme.wording
 
 import android.content.Context
 import android.text.format.DateFormat
@@ -8,7 +8,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** How dates and times are worded everywhere the owner reads them. */
+/** How dates and times are worded everywhere the user reads them. */
 object Times {
     private val dayAndMonth = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)
     private val dayMonthYear = DateTimeFormatter.ofPattern("EEE d MMM yyyy", Locale.ENGLISH)
@@ -20,12 +20,15 @@ object Times {
 
     fun time(context: Context, moment: LocalDateTime): String = time(context, moment.toLocalTime())
 
-    fun date(date: LocalDate, today: LocalDate = LocalDate.now()): String = when {
-        date == today -> "Today"
-        date == today.plusDays(1) -> "Tomorrow"
-        date == today.minusDays(1) -> "Yesterday"
-        date.year == today.year -> date.format(dayAndMonth)
-        else -> date.format(dayMonthYear)
+    fun date(date: LocalDate): String {
+        val today = LocalDate.now()
+        return when {
+            date == today -> "Today"
+            date == today.plusDays(1) -> "Tomorrow"
+            date == today.minusDays(1) -> "Yesterday"
+            date.year == today.year -> date.format(dayAndMonth)
+            else -> date.format(dayMonthYear)
+        }
     }
 
     fun dateAndTime(context: Context, moment: LocalDateTime): String =

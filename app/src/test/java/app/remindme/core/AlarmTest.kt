@@ -7,18 +7,18 @@ import org.junit.Test
 
 class AlarmTest {
     private fun World.alarm(title: String, due: String): Task =
-        tools.create(TaskDraft(title = title, due = at(due), style = DeliveryStyle.ALARM)).task()
+        tools.create(TaskDetails(title = title, due = at(due), style = DeliveryStyle.ALARM)).task()
 
     @Test
     fun `a task set to alarm rings at its due time and a notification task does not`() {
         val world = World(now = "2026-11-17T10:00")
         val alarm = world.alarm("Take the pills", "2026-11-17T15:00")
-        world.tools.create(TaskDraft(title = "Call the bank", due = at("2026-11-17T15:00")))
+        world.tools.create(TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00")))
 
         world.advanceTo("2026-11-17T15:00")
 
         assertEquals(setOf(alarm.id), world.announcer.ringing)
-        assertEquals(listOf(true, false), world.announcer.announced.sortedBy { it.taskId }.map { it.ring })
+        assertEquals(listOf(true, false), world.announcer.announced.sortedBy { it.taskId }.map { it.rings })
         assertEquals(DeliveryStyle.ALARM, world.tools.list().first { it.id == alarm.id }.style)
     }
 
@@ -75,8 +75,8 @@ class AlarmTest {
         world.advanceTo("2026-11-17T15:10")
         assertEquals(emptySet<Long>(), world.announcer.ringing)
         val left = world.announcer.announced.last()
-        assertFalse(left.ring)
-        assertTrue(left.late)
+        assertFalse(left.rings)
+        assertTrue(left.saysWasDue)
         assertEquals(at("2026-11-17T15:00"), left.due)
         assertEquals(Section.OVERDUE, world.tools.list().single().section(world.clock.now()))
         assertEquals(emptyList<Fire>(), world.scheduler.pending())
@@ -123,15 +123,15 @@ class AlarmTest {
     }
 
     @Test
-    fun `an alarm missed while the phone was off is told late as a notification, not rung`() {
+    fun `an alarm that came due while the phone was off is told as a notification saying when it was due, not rung`() {
         val world = World(now = "2026-11-17T10:00")
         world.alarm("Take the pills", "2026-11-17T15:00")
 
         world.restartPhoneAt("2026-11-17T18:00")
 
         val told = world.announcer.announced.single()
-        assertFalse(told.ring)
-        assertTrue(told.late)
+        assertFalse(told.rings)
+        assertTrue(told.saysWasDue)
         assertEquals(emptySet<Long>(), world.announcer.ringing)
         assertEquals(emptyList<Fire>(), world.scheduler.pending())
     }
@@ -142,10 +142,10 @@ class AlarmTest {
         val alarm = world.alarm("Take the pills", "2026-11-17T15:00")
 
         world.clock.local = at("2026-11-17T15:00:05")
-        world.tools.reschedule()
+        world.fires.reschedule()
 
         assertEquals(setOf(alarm.id), world.announcer.ringing)
-        assertFalse(world.announcer.announced.single().late)
+        assertFalse(world.announcer.announced.single().saysWasDue)
     }
 
     @Test
@@ -157,8 +157,8 @@ class AlarmTest {
         world.restartPhoneAt("2026-11-17T15:30")
 
         val left = world.announcer.announced.last()
-        assertFalse(left.ring)
-        assertTrue(left.late)
+        assertFalse(left.rings)
+        assertTrue(left.saysWasDue)
         assertEquals(emptyList<Fire>(), world.scheduler.pending())
     }
 
@@ -168,7 +168,7 @@ class AlarmTest {
         val alarm = world.alarm("Take the pills", "2026-11-17T15:00")
         world.advanceTo("2026-11-17T15:01")
 
-        world.tools.update(alarm.id, TaskDraft(title = "Take the pills", due = at("2026-11-17T20:00"), style = DeliveryStyle.ALARM))
+        world.tools.update(alarm.id, TaskDetails(title = "Take the pills", due = at("2026-11-17T20:00"), style = DeliveryStyle.ALARM))
 
         assertEquals(emptySet<Long>(), world.announcer.ringing)
         assertEquals(listOf(Fire(alarm.id, FireKind.DUE, at("2026-11-17T20:00"))), world.scheduler.pending())
@@ -177,9 +177,9 @@ class AlarmTest {
     @Test
     fun `a task can be changed from notification to alarm`() {
         val world = World(now = "2026-11-17T10:00")
-        val task = world.tools.create(TaskDraft(title = "Call the bank", due = at("2026-11-17T15:00"))).task()
+        val task = world.tools.create(TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00"))).task()
 
-        world.tools.update(task.id, TaskDraft(title = "Call the bank", due = at("2026-11-17T15:00"), style = DeliveryStyle.ALARM))
+        world.tools.update(task.id, TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00"), style = DeliveryStyle.ALARM))
         world.advanceTo("2026-11-17T15:00")
 
         assertEquals(setOf(task.id), world.announcer.ringing)

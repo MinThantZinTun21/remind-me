@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- Set-up asks the owner, through Android's own dialog, to lift battery restrictions for this app. -->
+    <!-- Set-up asks the user, through Android's own dialog, to lift battery restrictions for this app. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
@@ -54,7 +54,7 @@
             android:directBootAware="true"
             android:exported="false" />
 
-        <!-- The owner's answers from a notification: Done, Snooze, and Stop when it is swiped away. -->
+        <!-- The user's answers from a notification: Done, Snooze, and Stop when it is swiped away. -->
         <receiver
             android:name=".fire.AnswerReceiver"
             android:directBootAware="true"

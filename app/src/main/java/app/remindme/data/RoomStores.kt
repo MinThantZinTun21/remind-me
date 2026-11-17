@@ -36,17 +36,20 @@ class RoomTaskStore(private val dao: TaskDao, private val onChange: () -> Unit) 
         repeat = RepeatRule(
             cycle = RepeatRule.Cycle.valueOf(repeatCycle),
             every = repeatEvery,
-            weekdays = repeatWeekdays.split(',').filter { it.isNotEmpty() }.map { DayOfWeek.of(it.toInt()) }.toSet(),
+            weekdays = repeatWeekdays.listed().map { DayOfWeek.of(it.toInt()) }.toSet(),
             until = repeatUntil?.let(LocalDate::parse),
         ),
         firstDue = LocalDateTime.parse(firstDue),
         handledUntil = LocalDateTime.parse(handledUntil),
         style = DeliveryStyle.valueOf(style),
-        leadTimes = leadTimes.split(',').filter { it.isNotEmpty() }.map { Duration.ofMinutes(it.toLong()) },
-        snoozedUntil = snoozedUntil?.let(LocalDateTime::parse),
-        ringingUntil = ringingUntil?.let(LocalDateTime::parse),
+        leadTimes = leadTimes.listed().map { Duration.ofMinutes(it.toLong()) },
+        snoozedUntil = snoozedUntil?.let(Instant::parse),
+        ringingUntil = ringingUntil?.let(Instant::parse),
         doneAt = doneAt?.let(LocalDateTime::parse),
     )
+
+    /** The items of a comma-separated column; none when it is empty. */
+    private fun String.listed(): List<String> = split(',').filter { it.isNotEmpty() }
 
     private fun Task.toRow() = TaskRow(
         id = id,
@@ -76,7 +79,7 @@ class RoomFireLog(private val dao: FireLogDao, private val onChange: () -> Unit)
                 kind = record.kind.name,
                 scheduledFor = record.scheduledFor.toString(),
                 deliveredAtMillis = record.deliveredAt.toEpochMilli(),
-                lateMillis = record.late.toMillis(),
+                latenessMillis = record.lateness.toMillis(),
                 caughtUp = record.caughtUp,
             ),
         )
@@ -91,7 +94,7 @@ class RoomFireLog(private val dao: FireLogDao, private val onChange: () -> Unit)
             kind = FireKind.valueOf(it.kind),
             scheduledFor = LocalDateTime.parse(it.scheduledFor),
             deliveredAt = Instant.ofEpochMilli(it.deliveredAtMillis),
-            late = Duration.ofMillis(it.lateMillis),
+            lateness = Duration.ofMillis(it.latenessMillis),
             caughtUp = it.caughtUp,
         )
     }

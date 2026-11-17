@@ -19,8 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.remindme.RemindMeApp
+import app.remindme.core.HISTORY_KEPT
+import app.remindme.wording.Times
 
-/** The one-time tasks done in the last thirty days. "Not done" puts one back on the list. */
+/** The one-time tasks still in history. "Not done" puts one back on the list. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(app: RemindMeApp, onClose: () -> Unit) {
@@ -37,7 +39,7 @@ fun HistoryScreen(app: RemindMeApp, onClose: () -> Unit) {
     ) { padding ->
         if (done.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
-                Text("Nothing here. A task you mark done stays here for 30 days.")
+                Text("Nothing here. A task you mark done stays here for ${HISTORY_KEPT.toDays()} days.")
             }
         } else {
             LazyColumn(Modifier.fillMaxSize().padding(padding)) {

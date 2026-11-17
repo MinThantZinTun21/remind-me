@@ -26,21 +26,57 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.remindme.core.RepeatRule
+import app.remindme.wording.short
+import app.remindme.wording.inFull
 import java.time.DayOfWeek
 import java.time.LocalDate
 
-/** The ways of repeating the form offers. "Every day" and "Every N days" are one cycle with two faces. */
-enum class RepeatChoice(val label: String) {
-    NONE("Does not repeat"),
-    DAILY("Every day"),
-    WEEKDAYS("On chosen weekdays"),
-    EVERY_DAYS("Every few days"),
-    EVERY_WEEKS("Every week or few weeks"),
-    MONTHLY("Every month"),
-    YEARLY("Every year"),
+/**
+ * The ways of repeating the form offers, each with everything the form needs to know about it.
+ * "Every day" and "Every few days" are one cycle with two faces.
+ */
+enum class RepeatChoice(
+    val label: String,
+    /** What the choice says under the field, given the date the days are counted from. */
+    val note: (LocalDate) -> String,
+    val rule: (RepeatEntry) -> RepeatRule,
+    /** What the number field asks, for the choices that count days or weeks. */
+    val countLabel: String? = null,
+    val startingCount: String = "1",
+) {
+    NONE("Does not repeat", note = { "Once, at the due time." }, rule = { RepeatRule.ONCE }),
+    DAILY("Every day", note = { "Every day at this time." }, rule = { RepeatRule.daily(it.until) }),
+    WEEKDAYS(
+        "On chosen weekdays",
+        note = { "On the days you pick, at this time." },
+        rule = { RepeatRule.weekdays(it.weekdays, it.until) },
+    ),
+    EVERY_DAYS(
+        "Every few days",
+        note = { "Counted from the due date." },
+        rule = { RepeatRule.everyDays(it.count, it.until) },
+        countLabel = "Every how many days",
+        startingCount = "2",
+    ),
+    EVERY_WEEKS(
+        "Every week or few weeks",
+        note = { "On ${it.dayOfWeek.short()}, the weekday of the due date." },
+        rule = { RepeatRule.everyWeeks(it.count, it.until) },
+        countLabel = "Every how many weeks",
+    ),
+    MONTHLY(
+        "Every month",
+        note = { if (it.dayOfMonth > 28) "On day ${it.dayOfMonth}, or the last day of a shorter month." else "On day ${it.dayOfMonth} of each month." },
+        rule = { RepeatRule.monthly(it.until) },
+    ),
+    YEARLY(
+        "Every year",
+        note = { if (it.monthValue == 2 && it.dayOfMonth == 29) "On 29 Feb, or 28 Feb in other years." else "On this date each year." },
+        rule = { RepeatRule.yearly(it.until) },
+    ),
 }
 
-/** What the owner has picked under "Repeats", kept as typed so a half-filled number is not lost. */
+/** What the user has picked under "Repeats", kept as typed so a half-filled number is not lost. */
 data class RepeatEntry(
     val choice: RepeatChoice = RepeatChoice.NONE,
     val every: String = "",
@@ -48,18 +84,9 @@ data class RepeatEntry(
     val until: LocalDate? = null,
 ) {
     /** A number left empty becomes 0, which the tools refuse in words the form shows. */
-    fun rule(): RepeatRule {
-        val count = every.toIntOrNull() ?: 0
-        return when (choice) {
-            RepeatChoice.NONE -> RepeatRule.ONCE
-            RepeatChoice.DAILY -> RepeatRule.daily(until)
-            RepeatChoice.WEEKDAYS -> RepeatRule.weekdays(weekdays, until)
-            RepeatChoice.EVERY_DAYS -> RepeatRule.everyDays(count, until)
-            RepeatChoice.EVERY_WEEKS -> RepeatRule.everyWeeks(count, until)
-            RepeatChoice.MONTHLY -> RepeatRule.monthly(until)
-            RepeatChoice.YEARLY -> RepeatRule.yearly(until)
-        }
-    }
+    val count: Int get() = every.toIntOrNull() ?: 0
+
+    fun rule(): RepeatRule = choice.rule(this)
 
     companion object {
         fun of(rule: RepeatRule) = RepeatEntry(
@@ -78,10 +105,13 @@ data class RepeatEntry(
     }
 }
 
-/** How a task repeats: the cycle, the extra the cycle needs, and an optional last day. [date] is the due date in the form. */
+/**
+ * How a task repeats: the cycle, the extra the cycle needs, and an optional last day.
+ * [countedFrom] is the date its days are worked out from.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun RepeatField(entry: RepeatEntry, date: LocalDate, onChange: (RepeatEntry) -> Unit, onPickEndDate: () -> Unit) {
+fun RepeatField(entry: RepeatEntry, countedFrom: LocalDate, onChange: (RepeatEntry) -> Unit, onPickEndDate: () -> Unit) {
     var choosing by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Repeats", style = MaterialTheme.typography.labelLarge)
@@ -96,10 +126,7 @@ fun RepeatField(entry: RepeatEntry, date: LocalDate, onChange: (RepeatEntry) -> 
                             onChange(
                                 entry.copy(
                                     choice = choice,
-                                    every = when (choice) {
-                                        RepeatChoice.EVERY_DAYS -> "2"
-                                        else -> "1"
-                                    },
+                                    every = choice.startingCount,
                                     until = entry.until.takeIf { choice != RepeatChoice.NONE },
                                 ),
                             )
@@ -108,8 +135,8 @@ fun RepeatField(entry: RepeatEntry, date: LocalDate, onChange: (RepeatEntry) -> 
                 }
             }
         }
-        when (entry.choice) {
-            RepeatChoice.WEEKDAYS -> FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (entry.choice == RepeatChoice.WEEKDAYS) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (day in DayOfWeek.entries) {
                     val selected = day in entry.weekdays
                     FilterChip(
@@ -119,28 +146,18 @@ fun RepeatField(entry: RepeatEntry, date: LocalDate, onChange: (RepeatEntry) -> 
                     )
                 }
             }
-            RepeatChoice.EVERY_DAYS, RepeatChoice.EVERY_WEEKS -> OutlinedTextField(
+        }
+        entry.choice.countLabel?.let { countLabel ->
+            OutlinedTextField(
                 value = entry.every,
                 onValueChange = { typed -> onChange(entry.copy(every = typed.filter(Char::isDigit).take(3))) },
-                label = { Text(if (entry.choice == RepeatChoice.EVERY_DAYS) "Every how many days" else "Every how many weeks") },
+                label = { Text(countLabel) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
-            else -> Unit
         }
-        val note = when (entry.choice) {
-            RepeatChoice.NONE -> "Once, at the due time."
-            RepeatChoice.DAILY -> "Every day at this time."
-            RepeatChoice.WEEKDAYS -> "On the days you pick, at this time."
-            RepeatChoice.EVERY_DAYS -> "Counted from the due date."
-            RepeatChoice.EVERY_WEEKS -> "On ${date.dayOfWeek.short()}, the weekday of the due date."
-            RepeatChoice.MONTHLY ->
-                if (date.dayOfMonth > 28) "On day ${date.dayOfMonth}, or the last day of a shorter month." else "On day ${date.dayOfMonth} of each month."
-            RepeatChoice.YEARLY ->
-                if (date.monthValue == 2 && date.dayOfMonth == 29) "On 29 Feb, or 28 Feb in other years." else "On this date each year."
-        }
-        Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(entry.choice.note(countedFrom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (entry.choice != RepeatChoice.NONE) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onPickEndDate) {

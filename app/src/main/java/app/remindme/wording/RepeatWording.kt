@@ -1,4 +1,4 @@
-package app.remindme.ui
+package app.remindme.wording
 
 import app.remindme.core.RepeatRule
 import java.time.DayOfWeek

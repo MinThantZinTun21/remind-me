@@ -1,5 +1,6 @@
 package app.remindme.core
 
+import java.time.DayOfWeek
 import java.time.Duration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,7 +12,7 @@ class LeadTimeTest {
 
     private fun World.bankTask(vararg leadTimes: Duration, style: DeliveryStyle = DeliveryStyle.NOTIFICATION): Task =
         tools.create(
-            TaskDraft(title = "Call the bank", due = at("2026-11-17T15:00"), style = style, leadTimes = leadTimes.toList()),
+            TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00"), style = style, leadTimes = leadTimes.toList()),
         ).task()
 
     @Test
@@ -51,7 +52,7 @@ class LeadTimeTest {
         val task = world.bankTask(oneHour, style = DeliveryStyle.ALARM)
 
         world.advanceTo("2026-11-17T14:00")
-        assertFalse(world.announcer.announced.single().ring)
+        assertFalse(world.announcer.announced.single().rings)
         assertEquals(emptySet<Long>(), world.announcer.ringing)
 
         world.advanceTo("2026-11-17T15:00")
@@ -107,7 +108,7 @@ class LeadTimeTest {
         val world = World(now = "2026-11-17T10:00")
 
         val result = world.tools.create(
-            TaskDraft(
+            TaskDetails(
                 title = "Call the bank",
                 due = at("2026-11-17T15:00"),
                 leadTimes = listOf(oneHour, fifteenMinutes, Duration.ofMinutes(5)),
@@ -122,7 +123,7 @@ class LeadTimeTest {
         val world = World(now = "2026-11-17T10:00")
 
         val result = world.tools.create(
-            TaskDraft(title = "Call the bank", due = at("2026-11-17T15:00"), leadTimes = listOf(oneHour, oneHour)),
+            TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00"), leadTimes = listOf(oneHour, oneHour)),
         )
 
         assertEquals(ToolResult.Refused("The two lead times are the same."), result)
@@ -133,10 +134,10 @@ class LeadTimeTest {
         val world = World(now = "2026-11-17T10:00")
 
         val result = world.tools.create(
-            TaskDraft(title = "Call the bank", due = at("2026-11-17T15:00"), leadTimes = listOf(Duration.ZERO)),
+            TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00"), leadTimes = listOf(Duration.ZERO)),
         )
 
-        assertEquals(ToolResult.Refused("A lead time has to be at least one minute."), result)
+        assertEquals(ToolResult.Refused("A lead time is a whole number of minutes, at least one."), result)
     }
 
     @Test
@@ -146,7 +147,7 @@ class LeadTimeTest {
 
         world.tools.update(
             task.id,
-            TaskDraft(title = "Call the bank", due = at("2026-11-17T18:00"), leadTimes = listOf(oneHour)),
+            TaskDetails(title = "Call the bank", due = at("2026-11-17T18:00"), leadTimes = listOf(oneHour)),
         )
 
         assertEquals(
@@ -165,7 +166,7 @@ class LeadTimeTest {
 
         world.tools.update(
             task.id,
-            TaskDraft(
+            TaskDetails(
                 title = "Call the bank",
                 due = at("2026-11-17T15:00"),
                 leadTimes = listOf(Duration.ofHours(2), fifteenMinutes),
@@ -181,7 +182,7 @@ class LeadTimeTest {
     }
 
     @Test
-    fun `warnings missed while the phone was off give way to the due-time fire`() {
+    fun `warnings that came due while the phone was off give way to the due-time fire`() {
         val world = World(now = "2026-11-17T10:00")
         world.bankTask(oneHour, fifteenMinutes)
 
@@ -189,11 +190,11 @@ class LeadTimeTest {
 
         val told = world.announcer.announced.single()
         assertEquals(FireKind.DUE, told.kind)
-        assertEquals(true, told.late)
+        assertEquals(true, told.saysWasDue)
     }
 
     @Test
-    fun `a warning missed while the phone was off is given late when the due time is still ahead`() {
+    fun `a warning that came due while the phone was off is given at start-up when the due time is still ahead`() {
         val world = World(now = "2026-11-17T10:00")
         val task = world.bankTask(oneHour)
 
@@ -201,5 +202,76 @@ class LeadTimeTest {
 
         assertEquals(listOf(oneHour), world.announcer.announced.map { it.leadTime })
         assertEquals(listOf(Fire(task.id, FireKind.DUE, at("2026-11-17T15:00"))), world.scheduler.pending())
+    }
+
+    @Test
+    fun `a lead time that is not a whole number of minutes is refused`() {
+        val world = World(now = "2026-11-17T10:00")
+
+        val result = world.tools.create(
+            TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00"), leadTimes = listOf(Duration.ofSeconds(90))),
+        )
+
+        assertEquals(ToolResult.Refused("A lead time is a whole number of minutes, at least one."), result)
+        assertEquals(emptyList<Fire>(), world.scheduler.pending())
+    }
+
+    @Test
+    fun `a lead time as long as the time between occurrences is refused`() {
+        val world = World(now = "2026-11-16T10:00")
+        val tooLong = ToolResult.Refused("A lead time has to be shorter than the time between occurrences.")
+        fun create(repeat: RepeatRule, leadTime: Duration) = world.tools.create(
+            TaskDetails(title = "Take the pills", due = at("2026-11-17T09:00"), repeat = repeat, leadTimes = listOf(leadTime)),
+        )
+        val mondayAndThursday = RepeatRule.weekdays(setOf(DayOfWeek.MONDAY, DayOfWeek.THURSDAY))
+
+        assertEquals(tooLong, create(RepeatRule.daily(), Duration.ofDays(1)))
+        assertEquals(tooLong, create(RepeatRule.everyDays(2), Duration.ofDays(3)))
+        assertEquals(tooLong, create(mondayAndThursday, Duration.ofDays(3)))
+        assertEquals(tooLong, create(RepeatRule.everyWeeks(1), Duration.ofDays(7)))
+        assertEquals(tooLong, create(RepeatRule.monthly(), Duration.ofDays(28)))
+        assertEquals(tooLong, create(RepeatRule.yearly(), Duration.ofDays(365)))
+        assertEquals(emptyList<Task>(), world.tools.list())
+
+        create(RepeatRule.daily(), Duration.ofHours(23)).task()
+        create(mondayAndThursday, Duration.ofDays(2)).task()
+        create(RepeatRule.ONCE, Duration.ofDays(40)).task()
+    }
+
+    @Test
+    fun `a lead time just short of the time between occurrences warns before every occurrence`() {
+        val world = World(now = "2026-11-16T09:00")
+        world.tools.create(
+            TaskDetails(
+                title = "Take the pills",
+                due = at("2026-11-17T09:00"),
+                repeat = RepeatRule.daily(),
+                leadTimes = listOf(Duration.ofHours(23)),
+            ),
+        )
+
+        world.advanceTo("2026-11-19T09:00")
+
+        assertEquals(
+            listOf(
+                FireKind.WARNING_1 to at("2026-11-17T09:00"),
+                FireKind.DUE to at("2026-11-17T09:00"),
+                FireKind.WARNING_1 to at("2026-11-18T09:00"),
+                FireKind.DUE to at("2026-11-18T09:00"),
+                FireKind.WARNING_1 to at("2026-11-19T09:00"),
+                FireKind.DUE to at("2026-11-19T09:00"),
+            ),
+            world.announcer.announced.map { it.kind to it.due },
+        )
+    }
+
+    @Test
+    fun `a warning given after its moment no longer says how long is left`() {
+        val world = World(now = "2026-11-17T10:00")
+        world.bankTask(oneHour)
+
+        world.restartPhoneAt("2026-11-17T14:20")
+
+        assertEquals(Announcement.Form.Warning(oneHour, onTime = false), world.announcer.announced.single().form)
     }
 }

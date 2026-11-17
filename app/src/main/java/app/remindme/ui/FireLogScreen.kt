@@ -18,12 +18,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.remindme.RemindMeApp
-import app.remindme.core.FireRecord
+import app.remindme.wording.Times
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.Locale
 
-/** Every fire, when it was due and how late it arrived: the owner's check that the phone lets the app fire. */
+/** Every fire, when it was meant to come and how long after that it arrived: the user's check that the phone lets the app fire. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FireLogScreen(app: RemindMeApp, onClose: () -> Unit) {
@@ -54,7 +55,7 @@ fun FireLogScreen(app: RemindMeApp, onClose: () -> Unit) {
                                     "Arrived ${Times.dateAndTime(context, delivered)}",
                             )
                         },
-                        trailingContent = { Text(lateness(record) + if (record.caughtUp) "\ncaught up" else "") },
+                        trailingContent = { Text(behind(record.lateness) + if (record.caughtUp) "\ncaught up" else "") },
                     )
                     HorizontalDivider()
                 }
@@ -63,15 +64,12 @@ fun FireLogScreen(app: RemindMeApp, onClose: () -> Unit) {
     }
 }
 
-private fun lateness(record: FireRecord): String = FireLogWording.lateness(record.late)
-
-object FireLogWording {
-    fun lateness(late: Duration): String {
-        val seconds = late.toMillis() / 1000.0
-        return when {
-            seconds < 60 -> String.format(java.util.Locale.ENGLISH, "%.1f s late", seconds)
-            seconds < 3600 -> "${late.toMinutes()} min late"
-            else -> "${late.toHours()} h ${late.toMinutesPart()} min late"
-        }
+/** How long after its moment a fire arrived: "0.4 s behind", "3 min behind", "2 h 5 min behind". */
+private fun behind(lateness: Duration): String {
+    val seconds = lateness.toMillis() / 1000.0
+    return when {
+        seconds < 60 -> String.format(Locale.ENGLISH, "%.1f s behind", seconds)
+        seconds < 3600 -> "${lateness.toMinutes()} min behind"
+        else -> "${lateness.toHours()} h ${lateness.toMinutesPart()} min behind"
     }
 }

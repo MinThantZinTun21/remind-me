@@ -11,8 +11,8 @@ import android.os.PowerManager
 import android.provider.Settings
 
 /**
- * The one-time phone settings Remind Me needs to tell the owner on time: what the app can read of each,
- * the system screen that changes it, and the owner's own tick for the two the app cannot read.
+ * The one-time phone settings Remind Me needs to tell the user on time: what the app can read of each,
+ * the system screen that changes it, and the user's own tick for the two the app cannot read.
  */
 class SetUp(private val context: Context) {
     private val ticks = context.getSharedPreferences("set-up", Context.MODE_PRIVATE)
@@ -24,7 +24,7 @@ class SetUp(private val context: Context) {
     fun batteryExempt(): Boolean =
         context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
 
-    /** HiOS does not let an app read its Auto-start switch, so the owner says when it is on. */
+    /** HiOS does not let an app read its Auto-start switch, so the user says when it is on. */
     var autoStartTicked: Boolean
         get() = ticks.getBoolean(AUTO_START, false)
         set(value) = ticks.edit().putBoolean(AUTO_START, value).apply()
@@ -33,7 +33,7 @@ class SetUp(private val context: Context) {
         get() = ticks.getBoolean(LOCKED_IN_RECENTS, false)
         set(value) = ticks.edit().putBoolean(LOCKED_IN_RECENTS, value).apply()
 
-    /** The owner has been through the checklist once; after that it only opens from the menu. */
+    /** The user has been through the checklist once; after that it only opens from the menu. */
     var finished: Boolean
         get() = ticks.getBoolean(FINISHED, false)
         set(value) = ticks.edit().putBoolean(FINISHED, value).apply()

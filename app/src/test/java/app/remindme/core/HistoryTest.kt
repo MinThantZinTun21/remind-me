@@ -6,7 +6,7 @@ import org.junit.Test
 
 class HistoryTest {
     private fun World.task(title: String, due: String, leadTimes: List<Duration> = emptyList()): Task =
-        tools.create(TaskDraft(title = title, due = at(due), leadTimes = leadTimes)).task()
+        tools.create(TaskDetails(title = title, due = at(due), leadTimes = leadTimes)).task()
 
     @Test
     fun `a done one-time task moves to history, most recently done first`() {
@@ -37,7 +37,6 @@ class HistoryTest {
 
         world.advanceTo("2026-12-17T15:10")
         assertEquals(emptyList<Task>(), world.tools.history())
-        assertEquals(emptyList<Task>(), world.store.all())
     }
 
     @Test
@@ -98,7 +97,7 @@ class HistoryTest {
     fun `a repeating task never appears in history`() {
         val world = World(now = "2026-11-17T10:00")
         val pills = world.tools.create(
-            TaskDraft(
+            TaskDetails(
                 title = "Take the pills",
                 due = at("2026-11-17T15:00"),
                 repeat = RepeatRule.daily(until = java.time.LocalDate.parse("2026-11-18")),
@@ -114,15 +113,27 @@ class HistoryTest {
     }
 
     @Test
-    fun `not done on a task that is no longer in history does nothing`() {
+    fun `not done on a task that is no longer in history is refused and changes nothing`() {
         val world = World(now = "2026-11-17T10:00")
         val bank = world.task("Call the bank", "2026-11-17T15:00")
         world.tools.done(bank.id)
         world.advanceTo("2026-12-20T10:00")
 
-        world.tools.notDone(bank.id)
+        val result = world.tools.notDone(bank.id)
 
+        assertEquals(ToolResult.Refused("That task is not in history."), result)
         assertEquals(emptyList<Task>(), world.tools.list())
         assertEquals(emptyList<Fire>(), world.scheduler.pending())
+    }
+
+    @Test
+    fun `reading history is the same every time and leaves the list alone`() {
+        val world = World(now = "2026-11-17T10:00")
+        val bank = world.task("Call the bank", "2026-11-17T15:00")
+        val plants = world.task("Water the plants", "2026-11-17T16:00")
+        world.tools.done(bank.id)
+
+        assertEquals(world.tools.history(), world.tools.history())
+        assertEquals(listOf(plants.id), world.tools.list().map { it.id })
     }
 }

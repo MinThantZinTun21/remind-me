@@ -8,7 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.RingtoneManager
@@ -21,7 +20,7 @@ import android.provider.Settings
 import android.util.Log
 import app.remindme.AlarmActivity
 import app.remindme.R
-import app.remindme.ui.Times
+import app.remindme.wording.Times
 
 /**
  * Rings for as long as [Ringing] lists an alarm: the default alarm sound, looping on the alarm stream so
@@ -50,13 +49,13 @@ class RingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // A service started as foreground has to show its notification even when every alarm was answered meanwhile.
         startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
-        if (Ringing.tasks.isEmpty()) finish() else startSounding()
+        if (Ringing.alarms.isEmpty()) finish() else startSounding()
         return START_NOT_STICKY
     }
 
     /** The set of ringing alarms changed. */
     private fun refresh() {
-        if (Ringing.tasks.isEmpty()) {
+        if (Ringing.alarms.isEmpty()) {
             finish()
         } else {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
@@ -117,7 +116,7 @@ class RingService : Service() {
     }
 
     private fun notification(): Notification {
-        val ringing = Ringing.tasks.toList()
+        val ringing = Ringing.alarms.toList()
         val screen = PendingIntent.getActivity(
             this,
             0,
@@ -132,22 +131,17 @@ class RingService : Service() {
             .setContentIntent(screen)
             // Over the lock screen or a sleeping phone this opens the alarm screen; on a phone in use it is a banner.
             .setFullScreenIntent(screen, true)
-        val only = ringing.singleOrNull()
-        if (only != null) {
-            builder.setContentTitle(only.title)
-                .setContentText("Due ${Times.time(this, only.due)}")
-                .addAction(action("Done", AnswerReceiver.ACTION_DONE, only.taskId))
-                .addAction(action("Snooze 10 min", AnswerReceiver.ACTION_SNOOZE, only.taskId))
-                .addAction(action("Stop", AnswerReceiver.ACTION_STOP, only.taskId))
-        } else {
-            builder.setContentTitle("${ringing.size} alarms ringing")
-                .setContentText(ringing.joinToString(", ") { it.title })
-        }
+        // The banner answers one alarm at a time: the one that has rung longest. The next takes its place once it is answered.
+        val first = ringing.firstOrNull() ?: return builder.build()
+        val others = ringing.size - 1
+        val due = "Due ${Times.time(this, first.due)}"
+        builder.setContentTitle(first.title)
+            .setContentText(if (others == 0) due else "$due · $others more ringing")
+            .addAction(AnswerReceiver.doneButton(this, first.taskId))
+            .addAction(AnswerReceiver.snoozeButton(this, first.taskId))
+            .addAction(AnswerReceiver.stopButton(this, first.taskId))
         return builder.build()
     }
-
-    private fun action(label: String, action: String, taskId: Long): Notification.Action =
-        Notification.Action.Builder(null as Icon?, label, AnswerReceiver.intent(this, action, taskId)).build()
 
     companion object {
         private const val TAG = "RingService"
@@ -166,7 +160,7 @@ class RingService : Service() {
             val service = running
             when {
                 service != null -> service.refresh()
-                Ringing.tasks.isNotEmpty() -> context.startForegroundService(Intent(context, RingService::class.java))
+                Ringing.alarms.isNotEmpty() -> context.startForegroundService(Intent(context, RingService::class.java))
             }
         }
     }
