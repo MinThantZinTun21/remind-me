@@ -123,7 +123,7 @@ class AlarmTest {
     }
 
     @Test
-    fun `an alarm that came due while the phone was off is told as a notification saying when it was due, not rung`() {
+    fun `an alarm whose due time passed while the phone was off is told as a notification saying when it was due, not rung`() {
         val world = World(now = "2026-11-17T10:00")
         world.alarm("Take the pills", "2026-11-17T15:00")
 

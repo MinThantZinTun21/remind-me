@@ -5,13 +5,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -23,20 +20,12 @@ import app.remindme.core.HISTORY_KEPT
 import app.remindme.wording.Times
 
 /** The one-time tasks still in history. "Not done" puts one back on the list. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(app: RemindMeApp, onClose: () -> Unit) {
     val context = LocalContext.current
     val done = remember(app.revision.intValue) { app.tools.history() }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("History") },
-                navigationIcon = { TextButton(onClick = onClose) { Text("Back") } },
-            )
-        },
-    ) { padding ->
+    MenuScreen("History", onBack = onClose) { padding ->
         if (done.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
                 Text("Nothing here. A task you mark done stays here for ${HISTORY_KEPT.toDays()} days.")

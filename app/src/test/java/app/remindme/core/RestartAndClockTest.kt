@@ -18,7 +18,7 @@ class RestartAndClockTest {
     }
 
     @Test
-    fun `a fire that came due while the phone was off is announced once, saying when it was due, when the phone starts`() {
+    fun `a fire whose moment passed while the phone was off is announced once, saying when the task was due, when the phone starts`() {
         val world = World(now = "2026-11-17T10:00")
         world.tools.create(TaskDetails(title = "Call the bank", due = at("2026-11-17T15:00")))
 
@@ -112,7 +112,7 @@ class RestartAndClockTest {
 
         assertEquals(listOf(Instant.parse("2026-11-17T08:45:00Z")), world.scheduler.pendingInstants())
         world.advanceTo("2026-11-17T14:15")
-        assertEquals(listOf(FireKind.DUE, FireKind.SNOOZE), world.announcer.announced.map { it.kind })
+        assertEquals(listOf(FireKind.DUE, FireKind.SNOOZE), world.fired)
         assertEquals(Announcement.Form.DueNow, world.announcer.announced.last().form)
     }
 
@@ -123,7 +123,7 @@ class RestartAndClockTest {
         // Bangkok (UTC+7) is half an hour ahead of Yangon.
         world.travelTo("Asia/Bangkok", localTimeThere = "2026-11-17T15:35")
 
-        assertEquals(listOf(FireKind.DUE), world.announcer.announced.map { it.kind })
+        assertEquals(listOf(FireKind.DUE), world.fired)
         assertEquals(listOf(Instant.parse("2026-11-17T08:45:00Z")), world.scheduler.pendingInstants())
     }
 
@@ -138,7 +138,7 @@ class RestartAndClockTest {
         world.tools.snooze(task.id)
         world.advanceTo("2026-11-17T12:15")
 
-        assertEquals(listOf(FireKind.DUE, FireKind.SNOOZE), world.announcer.announced.map { it.kind })
+        assertEquals(listOf(FireKind.DUE, FireKind.SNOOZE), world.fired)
     }
 
     @Test
@@ -156,5 +156,29 @@ class RestartAndClockTest {
         assertEquals(listOf(Instant.parse("2026-11-17T08:40:00Z")), world.scheduler.pendingInstants())
         world.advanceTo("2026-11-17T14:10")
         assertEquals(emptySet<Long>(), world.announcer.ringing)
+    }
+
+    @Test
+    fun `a snooze asked for just before the clock repeats an hour comes back ten minutes on, not an hour early`() {
+        // New York's clocks go back at 02:00 on 1 November 2026, so 01:00 to 02:00 happens twice.
+        val world = World(now = "2026-10-31T10:00", zone = "America/New_York")
+        val task = world.tools.create(TaskDetails(title = "Call the bank", due = at("2026-11-01T01:50"))).task()
+        // 01:55 the first time round is 05:55 UTC.
+        world.advanceTo("2026-11-01T01:55")
+
+        world.tools.snooze(task.id)
+
+        // Ten minutes on the clock reads 01:05 for the second time: 06:05 UTC, not 05:05.
+        assertEquals(listOf(Instant.parse("2026-11-01T06:05:00Z")), world.scheduler.pendingInstants())
+    }
+
+    @Test
+    fun `an alarm that starts ringing just before the clock repeats an hour still rings for ten minutes`() {
+        val world = World(now = "2026-10-31T10:00", zone = "America/New_York")
+        world.tools.create(TaskDetails(title = "Take the pills", due = at("2026-11-01T01:55"), style = DeliveryStyle.ALARM))
+
+        world.advanceTo("2026-11-01T01:55")
+
+        assertEquals(listOf(Instant.parse("2026-11-01T06:05:00Z")), world.scheduler.pendingInstants())
     }
 }

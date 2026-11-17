@@ -69,7 +69,7 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
                     "Due ${Times.dateAndTime(context, due)}"
             Form.WasDue -> announcement.title to "Was due ${Times.dateAndTime(context, due)}"
             // A ring the phone refused is told as the notification it would have been.
-            Form.DueNow, Form.Ring -> announcement.title to "Due ${Times.time(context, due)}"
+            Form.DueNow, Form.Ring -> announcement.title to Times.dueAt(context, due)
         }
         val builder = Notification.Builder(context, CHANNEL_NOTIFICATIONS)
             .setSmallIcon(R.drawable.ic_notification)
@@ -81,7 +81,7 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
             .setAutoCancel(true)
             .addAction(AnswerReceiver.doneButton(context, taskId))
             // Swiping the notification away is Stop: the task stays as it is, overdue once its due time passes.
-            .setDeleteIntent(AnswerReceiver.intent(context, AnswerReceiver.ACTION_STOP, taskId))
+            .setDeleteIntent(AnswerReceiver.stopOnSwipe(context, taskId))
         // An early warning offers Done but no Snooze.
         if (form !is Form.Warning) builder.addAction(AnswerReceiver.snoozeButton(context, taskId))
         notifications.notify(taskId.toInt(), builder.build())

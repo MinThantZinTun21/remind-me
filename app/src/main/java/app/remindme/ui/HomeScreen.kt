@@ -47,6 +47,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.remindme.RemindMeApp
 import app.remindme.wording.Times
+import app.remindme.wording.label
 import app.remindme.wording.inWords
 import app.remindme.core.DeliveryStyle
 import app.remindme.core.Section
@@ -128,12 +129,12 @@ fun HomeScreen(
                         val inSection = sections[section] ?: continue
                         item(key = section.name) { SectionHeading(section) }
                         items(inSection, key = { it.id }) { task ->
-                            TaskRow(
+                            TaskLine(
                                 task = task,
                                 overdue = section == Section.OVERDUE,
                                 due = listOfNotNull(
                                     Times.dateAndTime(context, task.due),
-                                    "Alarm".takeIf { task.style == DeliveryStyle.ALARM },
+                                    task.style.label.takeIf { task.style == DeliveryStyle.ALARM },
                                     task.repeat.inWords(task.firstDue),
                                 ).joinToString("  ·  "),
                                 onOpen = { onEditTask(task.id) },
@@ -182,7 +183,7 @@ private fun SectionHeading(section: Section) {
 }
 
 @Composable
-private fun TaskRow(task: Task, overdue: Boolean, due: String, onOpen: () -> Unit, onDone: () -> Unit, onDelete: () -> Unit) {
+private fun TaskLine(task: Task, overdue: Boolean, due: String, onOpen: () -> Unit, onDone: () -> Unit, onDelete: () -> Unit) {
     ListItem(
         modifier = Modifier.clickable(onClick = onOpen),
         leadingContent = {

@@ -63,6 +63,8 @@ class RingService : Service() {
     }
 
     private fun finish() {
+        // From here a new ring has to start the service afresh: this one will not sound again.
+        if (running === this) running = null
         stopSounding()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -131,10 +133,12 @@ class RingService : Service() {
             .setContentIntent(screen)
             // Over the lock screen or a sleeping phone this opens the alarm screen; on a phone in use it is a banner.
             .setFullScreenIntent(screen, true)
+            // Where the phone lets the banner be swiped away, that is Stop, as it is for a notification.
+            .setDeleteIntent(AnswerReceiver.stopRingingOnSwipe(this))
         // The banner answers one alarm at a time: the one that has rung longest. The next takes its place once it is answered.
         val first = ringing.firstOrNull() ?: return builder.build()
         val others = ringing.size - 1
-        val due = "Due ${Times.time(this, first.due)}"
+        val due = Times.dueAt(this, first.due)
         builder.setContentTitle(first.title)
             .setContentText(if (others == 0) due else "$due · $others more ringing")
             .addAction(AnswerReceiver.doneButton(this, first.taskId))

@@ -49,6 +49,7 @@ import app.remindme.core.DeliveryStyle
 import app.remindme.core.RepeatRule
 import app.remindme.wording.Times
 import app.remindme.wording.inWords
+import app.remindme.wording.label
 import app.remindme.core.TaskDetails
 import app.remindme.core.ToolResult
 import app.remindme.core.anchorFor
@@ -133,7 +134,7 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
                             selected = style == choice,
                             onClick = { style = choice },
                             shape = SegmentedButtonDefaults.itemShape(index, DeliveryStyle.entries.size),
-                        ) { Text(if (choice == DeliveryStyle.ALARM) "Alarm" else "Notification") }
+                        ) { Text(choice.label) }
                     }
                 }
                 Text(
@@ -148,6 +149,7 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
             }
             LeadTimesField(
                 chosen = leadTimes,
+                shorterThan = details.repeat.shortestGap(),
                 onChange = { leadTimes = it; refusal = null },
                 onCustom = { pickingLeadTime = true },
             )
@@ -235,10 +237,13 @@ private val presetLeadTimes = listOf(
     Duration.ofDays(1),
 )
 
-/** None, one or two early warnings: the presets, plus any custom amount already chosen. */
+/**
+ * None, one or two early warnings: the presets, plus any custom amount already chosen. A lead time has to be
+ * [shorterThan] the time between the task's occurrences, so the longer presets cannot be picked.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun LeadTimesField(chosen: List<Duration>, onChange: (List<Duration>) -> Unit, onCustom: () -> Unit) {
+private fun LeadTimesField(chosen: List<Duration>, shorterThan: Duration?, onChange: (List<Duration>) -> Unit, onCustom: () -> Unit) {
     val full = chosen.size >= 2
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Warn me before", style = MaterialTheme.typography.labelLarge)
@@ -247,7 +252,7 @@ private fun LeadTimesField(chosen: List<Duration>, onChange: (List<Duration>) ->
                 val selected = leadTime in chosen
                 FilterChip(
                     selected = selected,
-                    enabled = selected || !full,
+                    enabled = selected || (!full && (shorterThan == null || leadTime < shorterThan)),
                     onClick = { onChange(if (selected) chosen - leadTime else chosen + leadTime) },
                     label = { Text(leadTime.inWords()) },
                 )

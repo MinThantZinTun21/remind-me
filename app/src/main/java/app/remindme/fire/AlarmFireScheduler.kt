@@ -10,7 +10,7 @@ import app.remindme.core.Fire
 import app.remindme.core.FireKind
 import app.remindme.core.FireScheduler
 import java.time.LocalDateTime
-import java.time.ZoneId
+import java.time.Instant
 
 /**
  * Hands planned fires to the phone's alarm system. Every fire, not only alarms, uses the alarm-clock
@@ -19,24 +19,29 @@ import java.time.ZoneId
 class AlarmFireScheduler(private val context: Context) : FireScheduler {
     private val alarms = context.getSystemService(AlarmManager::class.java)
 
-    override fun replace(taskId: Long, fires: List<Fire>, zone: ZoneId) {
+    override fun replace(taskId: Long, fires: Map<Fire, Instant>, ringEnd: Instant?) {
         for (kind in FireKind.entries) {
-            val fire = fires.firstOrNull { it.kind == kind }
-            if (fire == null) {
-                alarms.cancel(broadcast(taskId, kind, null))
-            } else {
-                val at = fire.at.atZone(zone).toInstant().toEpochMilli()
-                alarms.setAlarmClock(AlarmManager.AlarmClockInfo(at, openApp()), broadcast(taskId, kind, fire.at))
-            }
+            val fire = fires.keys.firstOrNull { it.kind == kind }
+            hold(fires[fire], fireBroadcast(taskId, kind, fire?.at))
+        }
+        hold(ringEnd, broadcast(ACTION_RING_END, "remindme://ring-end/$taskId"))
+    }
+
+    /** Asks the alarm system to send [broadcast] at [moment], or to drop it when there is no moment. */
+    private fun hold(moment: Instant?, broadcast: PendingIntent) {
+        if (moment == null) {
+            alarms.cancel(broadcast)
+        } else {
+            alarms.setAlarmClock(AlarmManager.AlarmClockInfo(moment.toEpochMilli(), openApp()), broadcast)
         }
     }
 
     /** One slot per task and kind of fire, so replacing or cancelling always finds the earlier one. */
-    private fun broadcast(taskId: Long, kind: FireKind, at: LocalDateTime?): PendingIntent {
-        val intent = Intent(context, FireReceiver::class.java)
-            .setAction(ACTION_FIRE)
-            .setData(Uri.parse("remindme://fire/$taskId/${kind.name}"))
-        if (at != null) intent.putExtra(EXTRA_AT, at.toString())
+    private fun fireBroadcast(taskId: Long, kind: FireKind, at: LocalDateTime?): PendingIntent =
+        broadcast(ACTION_FIRE, "remindme://fire/$taskId/${kind.name}") { if (at != null) putExtra(EXTRA_AT, at.toString()) }
+
+    private fun broadcast(action: String, slot: String, extras: Intent.() -> Unit = {}): PendingIntent {
+        val intent = Intent(context, FireReceiver::class.java).setAction(action).setData(Uri.parse(slot)).apply(extras)
         return PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
@@ -45,6 +50,7 @@ class AlarmFireScheduler(private val context: Context) : FireScheduler {
 
     companion object {
         const val ACTION_FIRE = "app.remindme.FIRE"
+        const val ACTION_RING_END = "app.remindme.RING_END"
         const val EXTRA_AT = "at"
 
         fun fireFrom(intent: Intent): Fire? {
@@ -54,5 +60,8 @@ class AlarmFireScheduler(private val context: Context) : FireScheduler {
             val at = intent.getStringExtra(EXTRA_AT)?.let(LocalDateTime::parse) ?: return null
             return Fire(taskId, kind, at)
         }
+
+        /** The task whose ring is to give up. */
+        fun ringEndFrom(intent: Intent): Long? = intent.data?.lastPathSegment?.toLongOrNull()
     }
 }

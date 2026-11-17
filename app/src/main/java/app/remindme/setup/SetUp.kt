@@ -44,8 +44,12 @@ class SetUp(private val context: Context) {
         appSettings(),
     )
 
-    /** Opens Phone Master's Auto-start list on HiOS; on a phone without it, the app's own settings page. */
-    fun openAutoStart(from: Activity) = open(from, Intent().setComponent(HIOS_AUTO_START), appSettings())
+    /**
+     * Opens Phone Master's Auto-start list on HiOS, by its screen and, where that is closed to other apps,
+     * by its action; on a phone without it, the app's own settings page.
+     */
+    fun openAutoStart(from: Activity) =
+        open(from, Intent().setComponent(HIOS_AUTO_START), Intent(HIOS_AUTO_START_ACTION), appSettings())
 
     /** Shows Android's own "let this app run in the background without restrictions?" dialog. */
     fun askForBatteryExemption(from: Activity) = open(
@@ -76,7 +80,10 @@ class SetUp(private val context: Context) {
         const val LOCKED_IN_RECENTS = "locked-in-recents-ticked"
         const val FINISHED = "finished"
 
-        /** Reported for Transsion phones in the research for ticket 04; whether it opens on the Camon 40 is checked there. */
+        /** Reported for Transsion phones in the research for ticket 04; the prototype opened it on the Camon 40. */
         val HIOS_AUTO_START = ComponentName("com.transsion.phonemaster", "com.cyin.himgr.autostart.AutoStartActivity")
+
+        /** The same list by its action, the prototype's second way in. */
+        const val HIOS_AUTO_START_ACTION = "com.cyin.himgr.applicationmanager.view.activities.AUTO_START_ACTIVITY"
     }
 }

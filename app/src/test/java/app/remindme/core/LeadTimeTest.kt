@@ -32,7 +32,7 @@ class LeadTimeTest {
 
         assertEquals(
             listOf(FireKind.WARNING_1 to oneHour, FireKind.WARNING_2 to fifteenMinutes, FireKind.DUE to null),
-            world.announcer.announced.map { it.kind to it.leadTime },
+            world.fired.zip(world.announcer.announced.map { it.leadTime }),
         )
         assertEquals(at("2026-11-17T15:00"), world.announcer.announced.first().due)
     }
@@ -182,19 +182,18 @@ class LeadTimeTest {
     }
 
     @Test
-    fun `warnings that came due while the phone was off give way to the due-time fire`() {
+    fun `warnings whose moments passed while the phone was off give way to the due-time fire`() {
         val world = World(now = "2026-11-17T10:00")
         world.bankTask(oneHour, fifteenMinutes)
 
         world.restartPhoneAt("2026-11-17T15:30")
 
-        val told = world.announcer.announced.single()
-        assertEquals(FireKind.DUE, told.kind)
-        assertEquals(true, told.saysWasDue)
+        assertEquals(listOf(FireKind.DUE), world.fired)
+        assertEquals(true, world.announcer.announced.single().saysWasDue)
     }
 
     @Test
-    fun `a warning that came due while the phone was off is given at start-up when the due time is still ahead`() {
+    fun `a warning whose moment passed while the phone was off is given at start-up when the due time is still ahead`() {
         val world = World(now = "2026-11-17T10:00")
         val task = world.bankTask(oneHour)
 
@@ -261,7 +260,7 @@ class LeadTimeTest {
                 FireKind.WARNING_1 to at("2026-11-19T09:00"),
                 FireKind.DUE to at("2026-11-19T09:00"),
             ),
-            world.announcer.announced.map { it.kind to it.due },
+            world.fired.zip(world.announcer.announced.map { it.due }),
         )
     }
 

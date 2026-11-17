@@ -215,7 +215,7 @@ class RepeatTest {
                 FireKind.WARNING_1 to at("2026-11-18T15:00"),
                 FireKind.DUE to at("2026-11-18T15:00"),
             ),
-            world.announcer.announced.map { it.kind to it.due },
+            world.fired.zip(world.announcer.announced.map { it.due }),
         )
     }
 
@@ -234,7 +234,7 @@ class RepeatTest {
     }
 
     @Test
-    fun `when the latest fire to come due while the phone was off is the next occurrence's warning the task moves on to that occurrence`() {
+    fun `when the latest fire whose moment passed while the phone was off is the next occurrence's warning the task moves on to that occurrence`() {
         val world = World(now = "2026-11-17T07:00")
         val task = world.repeating("2026-11-17T09:00", RepeatRule.daily(), leadTimes = listOf(Duration.ofHours(1)))
 

@@ -20,6 +20,9 @@ object Times {
 
     fun time(context: Context, moment: LocalDateTime): String = time(context, moment.toLocalTime())
 
+    /** What an announcement at the due time says under the task's title: "Due 3:00 PM". */
+    fun dueAt(context: Context, due: LocalDateTime): String = "Due ${time(context, due)}"
+
     fun date(date: LocalDate): String {
         val today = LocalDate.now()
         return when {

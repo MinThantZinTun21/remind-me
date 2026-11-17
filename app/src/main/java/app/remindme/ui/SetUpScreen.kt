@@ -16,14 +16,10 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,7 +36,6 @@ import app.remindme.setup.SetUp
  * later it opens from the home menu. [resumes] changes each time the user comes back to the app,
  * which is when a setting may have changed on a system screen.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SetUpScreen(setUp: SetUp, resumes: Int, firstRun: Boolean, onClose: () -> Unit) {
     val activity = LocalActivity.current ?: return
@@ -61,14 +56,7 @@ fun SetUpScreen(setUp: SetUp, resumes: Int, firstRun: Boolean, onClose: () -> Un
         if (granted) setUp.openNotificationSettings(activity) else askForNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Set-up") },
-                navigationIcon = { if (!firstRun) TextButton(onClick = onClose) { Text("Back") } },
-            )
-        },
-    ) { padding ->
+    MenuScreen("Set-up", onBack = onClose.takeIf { !firstRun }) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),

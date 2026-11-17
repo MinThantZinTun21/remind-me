@@ -36,30 +36,27 @@ enum class FireKind(
 
     /** A snooze coming back. */
     SNOOZE,
-
-    /** An alarm left ringing gives up: the due-time announcement carries on as a notification. */
-    RING_END,
     ;
 
-    /** True for the fires an occurrence has in its own right, its warnings and its due time, not for answers to them. */
-    val startsWithOccurrence: Boolean get() = this == DUE || leadTimeIndex != null
+    /** True for the fires an occurrence has in its own right, its warnings and its due time, not for a snooze of them. */
+    val startsWithOccurrence: Boolean get() = this != SNOOZE
 }
 
-/** One announcement the phone is to make for a task, at a moment on the phone's own clock. */
+/** One announcement the phone is to make for a task, at a time on the phone's own clock. */
 data class Fire(val taskId: Long, val kind: FireKind, val at: LocalDateTime)
 
 interface FireScheduler {
     /**
-     * Makes [fires] the complete set of scheduled fires for the task, cancelling any others it had.
-     * Each fire's wall-clock time is to be read in [zone].
+     * Makes [fires] everything the alarm system holds for the task, each fire with the real moment it is to
+     * arrive, cancelling any others it had. [ringEnd] is the moment the task's ring is to give up; null
+     * when the task is not ringing.
      */
-    fun replace(taskId: Long, fires: List<Fire>, zone: ZoneId)
+    fun replace(taskId: Long, fires: Map<Fire, Instant>, ringEnd: Instant?)
 }
 
 /** What the user is told when a fire is delivered. */
 data class Announcement(
     val taskId: Long,
-    val kind: FireKind,
     val title: String,
     val due: LocalDateTime,
     val form: Form,
@@ -75,7 +72,7 @@ data class Announcement(
         /** A notification at the due time, or of a snooze coming back. */
         data object DueNow : Form
 
-        /** A notification given after its moment has passed, so it says when the task was due. */
+        /** A notification given after its moment has passed, or left by a ring nobody answered, so it says when the task was due. */
         data object WasDue : Form
 
         /** A full-screen ring. */
@@ -99,7 +96,7 @@ data class FireRecord(
     val scheduledFor: LocalDateTime,
     val deliveredAt: Instant,
     val lateness: Duration,
-    /** True when the app found the fire past due at rescheduling, instead of the alarm system delivering it. */
+    /** True when the app found the fire's moment already passed at rescheduling, instead of the alarm system delivering it. */
     val caughtUp: Boolean,
 )
 

@@ -14,17 +14,29 @@ class World(now: String, zone: String = "Asia/Yangon") {
     val fires = Fires(store, scheduler, announcer, fireLog, clock)
     val tools = Tools(store, fires, announcer, clock)
 
-    /** Move the clock to [time], delivering every scheduled fire that comes due on the way, in order. */
+    /** Move the clock to [time], delivering whatever the alarm system holds for a moment on the way, in order. */
     fun advanceTo(time: String) {
         val target = at(time)
+        val deadline = target.atZone(clock.zoneId).toInstant()
         while (true) {
-            val next = scheduler.pending().filter { it.at <= target }.minByOrNull { it.at } ?: break
-            if (next.at > clock.local) clock.local = next.at
-            scheduler.remove(next)
-            fires.deliver(next)
+            val fire = scheduler.nextFire()
+            val ringEnd = scheduler.nextRingEnd()
+            val moment = listOfNotNull(fire?.value, ringEnd?.value).minOrNull()?.takeIf { it <= deadline } ?: break
+            clock.local = maxOf(clock.local, LocalDateTime.ofInstant(moment, clock.zoneId))
+            if (fire?.value == moment) {
+                scheduler.remove(fire.key)
+                fires.deliver(fire.key)
+            } else {
+                val taskId = ringEnd!!.key
+                scheduler.removeRingEnd(taskId)
+                fires.endRing(taskId)
+            }
         }
         clock.local = target
     }
+
+    /** The kinds of fire delivered so far, in order. */
+    val fired: List<FireKind> get() = fireLog.entries.map { it.kind }
 
     /** The phone is off until [time]: nothing is delivered meanwhile, its alarm list is wiped, and the app reschedules at start-up. */
     fun restartPhoneAt(time: String) {
@@ -64,22 +76,34 @@ class InMemoryTaskStore : TaskStore {
 }
 
 class RecordingScheduler : FireScheduler {
-    private val byTask = mutableMapOf<Long, List<Fire>>()
-    private val zones = mutableMapOf<Long, ZoneId>()
+    private val fires = linkedMapOf<Long, Map<Fire, Instant>>()
+    private val ringEnds = linkedMapOf<Long, Instant>()
 
-    override fun replace(taskId: Long, fires: List<Fire>, zone: ZoneId) {
-        if (fires.isEmpty()) byTask.remove(taskId) else byTask[taskId] = fires
-        zones[taskId] = zone
+    override fun replace(taskId: Long, fires: Map<Fire, Instant>, ringEnd: Instant?) {
+        if (fires.isEmpty()) this.fires.remove(taskId) else this.fires[taskId] = fires
+        if (ringEnd == null) ringEnds.remove(taskId) else ringEnds[taskId] = ringEnd
     }
 
-    /** The real moments the pending fires were scheduled for. */
-    fun pendingInstants(): List<Instant> = pending().map { it.at.atZone(zones.getValue(it.taskId)).toInstant() }
+    /** The scheduled fires, earliest first. */
+    fun pending(): List<Fire> = fires.values.flatMap { it.entries }.sortedBy { it.value }.map { it.key }
 
-    fun wipe() = byTask.clear()
+    /** Every real moment the alarm system holds, for fires and for rings giving up. */
+    fun pendingInstants(): List<Instant> = (fires.values.flatMap { it.values } + ringEnds.values).sorted()
 
-    fun pending(): List<Fire> = byTask.values.flatten().sortedBy { it.at }
+    fun nextFire(): Map.Entry<Fire, Instant>? = fires.values.flatMap { it.entries }.minByOrNull { it.value }
+    fun nextRingEnd(): Map.Entry<Long, Instant>? = ringEnds.entries.minByOrNull { it.value }
+
+    fun wipe() {
+        fires.clear()
+        ringEnds.clear()
+    }
+
     fun remove(fire: Fire) {
-        byTask[fire.taskId] = byTask[fire.taskId].orEmpty() - fire
+        fires[fire.taskId] = fires[fire.taskId].orEmpty() - fire
+    }
+
+    fun removeRingEnd(taskId: Long) {
+        ringEnds.remove(taskId)
     }
 }
 
