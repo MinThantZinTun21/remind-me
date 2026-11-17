@@ -9,7 +9,7 @@ A thing the user needs to do, with a due time.
 _Avoid_: Reminder (for the thing itself), event, todo
 
 **Due time**:
-The moment a task is supposed to happen, always a date and a time; a task always announces itself at its due time.
+The moment a task is supposed to happen, always a date and a time on the phone's own clock, so 9:00 stays 9:00 when the time zone changes; a task always announces itself at its due time.
 _Avoid_: Task time, deadline
 
 **Lead time**:
@@ -17,7 +17,7 @@ How long before the due time the user gets an early warning about a task; a task
 _Avoid_: Reminder time, offset, "before time"
 
 **Repeat rule**:
-Whether a task happens once or recurs, on what cycle, and until what date if it ends.
+Whether a task happens once or recurs, on what cycle (daily, on chosen weekdays, every N days, every N weeks, monthly on a day of the month, or yearly), and until what date if it ends.
 _Avoid_: Recurrence, schedule
 
 **Delivery style**:
@@ -33,11 +33,23 @@ The user's statement that they did an occurrence, separate from dismissing its n
 _Avoid_: Completed, finished, dismissed
 
 **Overdue**:
-A task whose due time has passed without the occurrence being marked done.
+A task whose due time has passed without the occurrence being marked done; on a repeating task the next occurrence replaces an overdue one.
 _Avoid_: Missed, late
 
+**Stop**:
+The user's silencing of an alarm, or swiping away of a notification, without saying the occurrence is done; the task is then overdue.
+_Avoid_: Dismiss, cancel, close
+
+**Fire**:
+One announcement the phone makes for an occurrence: a lead-time warning, the notification or alarm at the due time, or a snooze coming back.
+_Avoid_: Trigger, alert, ping
+
+**Snooze**:
+The user's request to be told about an occurrence again ten minutes later; it does not change the due time.
+_Avoid_: Postpone, delay, remind me later
+
 **History**:
-Where done one-time tasks are kept for a limited time before they are removed.
+Where done one-time tasks are kept for 30 days before they are removed.
 _Avoid_: Archive, log, completed list
 
 **Notification**:
@@ -45,7 +57,7 @@ A normal heads-up with sound that tells the user about a task; the default deliv
 _Avoid_: Noti, reminder, alert
 
 **Alarm**:
-A full-screen ring that continues until the user dismisses it; the delivery style used when the user's text asks for it.
+A full-screen ring that continues until the user answers it or ten minutes pass, and that sounds even when the phone is on silent; the delivery style used when the user's text asks for it.
 _Avoid_: Loud notification, alert
 
 **Agent**:
