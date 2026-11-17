@@ -1,7 +1,7 @@
 # Task and repeat rule model
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: none
 Map: [Remind Me v1](../map.md)
 

@@ -38,12 +38,18 @@ A build-ready spec for Remind Me v1, saved in this repo: a personal Android app 
 
 <!-- one line per closed ticket: [title](issues/NN-slug.md): gist -->
 
+- [On-device model runtimes for the Camon 40](issues/01-on-device-model-runtimes.md): bake-off shortlist is LiteRT-LM and llama.cpp, both on CPU; no published speed figure exists for the Helio G99.
+- [Small models that can call tools](issues/02-small-tool-calling-models.md): bake-off shortlist is LFM3-1.7B, Gemma 4 E2B, Qwen3.5-2B, Qwen3.5-4B; speed is the limit (estimated 5 to 20 s per tool call); evidence says code, not the model, should do date arithmetic.
+- [Android 16 rules for exact alarms and full-screen alarms](issues/03-android-16-alarm-apis.md): `setExactAndAllowWhileIdle` for notifications, `setAlarmClock` plus a `systemExempted` foreground service for alarms, `USE_EXACT_ALARM` at install; survives sleep, swipe-away and reboot (after rescheduling), but not Force stop.
+- [What Tecno HiOS does to background apps and alarms](issues/04-hios-background-restrictions.md): low-to-moderate evidence, none from a Camon 40; a HiOS freezer is reported to hold back scheduled alarms within seconds of leaving the app, a swipe kills the process without a force stop, and the boot broadcast may arrive minutes late; six one-time settings and eight behaviours for the prototype to test.
+
 ## Not yet specified
 
-- **If no model passes the bar.** Whether to fine-tune a small model on the test set, accept a bigger and slower model, drop to create-only, or have code do the date arithmetic the model gets wrong. Hangs on the model bake-off.
+- **If no model passes the bar, or the ones that pass are too slow.** Research estimates 5 to 20 s per tool call on this phone against the "few seconds" accepted at charting. Whether to fine-tune a small model on the test set, accept a bigger and slower model, drop to create-only, or have code do the date arithmetic the model gets wrong. Hangs on the model bake-off.
 - **The agent's instructions.** System prompt wording, examples, and how much of the task list and conversation the model is shown each turn. Hangs on the tool contract and on which model wins.
 - **First-run setup.** How the model file gets onto the phone and the order of the permission walkthrough (notifications, exact alarms, full-screen alarm, battery, autostart). Hangs on the winning model and runtime and on what the reliability prototype shows HiOS needs.
 - **App architecture.** Storage, the scheduling component, how the agent loop is structured in code, and when the model is loaded into and dropped from memory. Hangs on the tool contract and the runtime choice.
+- **If HiOS cannot be made to fire reliably.** What to relax or work around if the reliability prototype shows the freezer holds back alarms whatever the owner sets: which parts of the hard requirement give way, and whether the application ID should contain `alarm` to land on HiOS's reported allowlist. Hangs on the alarm reliability prototype.
 - **Clock and time zone changes.** What happens to scheduled tasks when the owner travels or the clock is changed by hand. Probably falls out of firing behaviour; may not need its own ticket.
 - **Assembling the spec.** Once the tickets are closed, collapsing the decisions into the single spec document that is the destination.
 
