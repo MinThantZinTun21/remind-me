@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "9325b0bb3bf4e9c7137251135b72b819",
+    "identityHash": "dab641d5592e4ae2cdea7769249ada90",
     "entities": [
       {
         "tableName": "tasks",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `due` TEXT NOT NULL, `handledUntil` TEXT NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `due` TEXT NOT NULL, `handledUntil` TEXT NOT NULL, `snoozedUntil` TEXT, `doneAt` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -31,6 +31,16 @@
             "columnName": "handledUntil",
             "affinity": "TEXT",
             "notNull": true
+          },
+          {
+            "fieldPath": "snoozedUntil",
+            "columnName": "snoozedUntil",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "doneAt",
+            "columnName": "doneAt",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -103,7 +113,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '9325b0bb3bf4e9c7137251135b72b819')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'dab641d5592e4ae2cdea7769249ada90')"
     ]
   }
 }

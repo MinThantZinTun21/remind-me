@@ -15,7 +15,7 @@ class RoomTaskStore(private val dao: TaskDao, private val onChange: () -> Unit) 
     override fun get(id: Long): Task? = dao.get(id)?.toTask()
 
     override fun put(task: Task): Task {
-        val saved = if (task.id == 0L) task.copy(id = dao.insert(task.toRow())) else task.also { dao.update(it.toRow()) }
+        val saved = task.copy(id = dao.save(task.toRow()))
         onChange()
         return saved
     }
@@ -30,9 +30,18 @@ class RoomTaskStore(private val dao: TaskDao, private val onChange: () -> Unit) 
         title = title,
         due = LocalDateTime.parse(due),
         handledUntil = LocalDateTime.parse(handledUntil),
+        snoozedUntil = snoozedUntil?.let(LocalDateTime::parse),
+        doneAt = doneAt?.let(LocalDateTime::parse),
     )
 
-    private fun Task.toRow() = TaskRow(id = id, title = title, due = due.toString(), handledUntil = handledUntil.toString())
+    private fun Task.toRow() = TaskRow(
+        id = id,
+        title = title,
+        due = due.toString(),
+        handledUntil = handledUntil.toString(),
+        snoozedUntil = snoozedUntil?.toString(),
+        doneAt = doneAt?.toString(),
+    )
 }
 
 class RoomFireLog(private val dao: FireLogDao, private val onChange: () -> Unit) : FireLog {

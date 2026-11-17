@@ -5,7 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
+import android.graphics.drawable.Icon
 import app.remindme.MainActivity
 import app.remindme.R
 import app.remindme.core.Announcement
@@ -22,10 +22,11 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
     }
 
     override fun announce(announcement: Announcement) {
+        val taskId = announcement.taskId
         val open = PendingIntent.getActivity(
             context,
-            announcement.taskId.toInt(),
-            Intent(context, MainActivity::class.java),
+            0,
+            MainActivity.openTask(context, taskId),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = Notification.Builder(context, CHANNEL_NOTIFICATIONS)
@@ -36,9 +37,20 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
             .setShowWhen(true)
             .setContentIntent(open)
             .setAutoCancel(true)
+            .addAction(action("Done", AnswerReceiver.ACTION_DONE, taskId))
+            .addAction(action("Snooze 10 min", AnswerReceiver.ACTION_SNOOZE, taskId))
+            // Swiping the notification away is Stop: the task stays overdue.
+            .setDeleteIntent(AnswerReceiver.intent(context, AnswerReceiver.ACTION_STOP, taskId))
             .build()
-        notifications.notify(announcement.taskId.toInt(), notification)
+        notifications.notify(taskId.toInt(), notification)
     }
+
+    override fun clear(taskId: Long) {
+        notifications.cancel(taskId.toInt())
+    }
+
+    private fun action(label: String, action: String, taskId: Long): Notification.Action =
+        Notification.Action.Builder(null as Icon?, label, AnswerReceiver.intent(context, action, taskId)).build()
 
     private fun wording(announcement: Announcement): String =
         if (announcement.late) {

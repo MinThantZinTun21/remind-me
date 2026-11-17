@@ -21,7 +21,7 @@ interface TaskStore {
     fun delete(id: Long)
 }
 
-enum class FireKind { DUE }
+enum class FireKind { DUE, SNOOZE }
 
 /** One announcement the phone is to make for a task, at a moment on the phone's own clock. */
 data class Fire(val taskId: Long, val kind: FireKind, val at: LocalDateTime)
@@ -46,6 +46,9 @@ data class Announcement(
 
 interface Announcer {
     fun announce(announcement: Announcement)
+
+    /** Takes away whatever is still showing for the task. */
+    fun clear(taskId: Long)
 }
 
 /** One line of the Fire log: what fired, when it was meant to, and how late it arrived. */

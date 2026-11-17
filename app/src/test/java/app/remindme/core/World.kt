@@ -78,8 +78,12 @@ class RecordingScheduler : FireScheduler {
 
 class RecordingAnnouncer : Announcer {
     val announced = mutableListOf<Announcement>()
+    val cleared = mutableListOf<Long>()
     override fun announce(announcement: Announcement) {
         announced += announcement
+    }
+    override fun clear(taskId: Long) {
+        cleared += taskId
     }
 }
 

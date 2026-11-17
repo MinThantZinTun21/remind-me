@@ -10,7 +10,21 @@ data class Task(
     val due: LocalDateTime,
     /** Every fire at or before this moment has been delivered or deliberately skipped. */
     val handledUntil: LocalDateTime,
+    /** When a snooze brings the occurrence back; null when none was asked for. */
+    val snoozedUntil: LocalDateTime? = null,
+    /** When the owner marked the task done; null while it is still to do. */
+    val doneAt: LocalDateTime? = null,
 )
+
+/** Where a task that is still to do sits on the home screen. */
+enum class Section { OVERDUE, TODAY, TOMORROW, LATER }
+
+fun Task.section(now: LocalDateTime): Section = when {
+    due <= now -> Section.OVERDUE
+    due.toLocalDate() == now.toLocalDate() -> Section.TODAY
+    due.toLocalDate() == now.toLocalDate().plusDays(1) -> Section.TOMORROW
+    else -> Section.LATER
+}
 
 /** What the owner (or, later, the agent) supplies to create or change a task. */
 data class TaskDraft(

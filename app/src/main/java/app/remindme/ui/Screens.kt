@@ -6,6 +6,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -16,20 +18,33 @@ import app.remindme.RemindMeApp
 sealed interface Screen {
     data object Home : Screen
     data object NewTask : Screen
+    data class EditTask(val taskId: Long) : Screen
     data object FireLog : Screen
 }
 
+/** [taskToOpen] is set when the owner taps a notification; the screens show that task and clear it. */
 @Composable
-fun RemindMeScreens(app: RemindMeApp) {
+fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>) {
     val context = LocalContext.current
     val colors = if (isSystemInDarkTheme()) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
 
+    LaunchedEffect(taskToOpen.value) {
+        taskToOpen.value?.let { screen = Screen.EditTask(it) }
+        taskToOpen.value = null
+    }
+
     MaterialTheme(colorScheme = colors) {
         BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
-        when (screen) {
-            Screen.Home -> HomeScreen(app, onNewTask = { screen = Screen.NewTask }, onFireLog = { screen = Screen.FireLog })
-            Screen.NewTask -> TaskFormScreen(app, onClose = { screen = Screen.Home })
+        when (val current = screen) {
+            Screen.Home -> HomeScreen(
+                app,
+                onNewTask = { screen = Screen.NewTask },
+                onEditTask = { screen = Screen.EditTask(it) },
+                onFireLog = { screen = Screen.FireLog },
+            )
+            Screen.NewTask -> TaskFormScreen(app, taskId = null, onClose = { screen = Screen.Home })
+            is Screen.EditTask -> TaskFormScreen(app, taskId = current.taskId, onClose = { screen = Screen.Home })
             Screen.FireLog -> FireLogScreen(app, onClose = { screen = Screen.Home })
         }
     }

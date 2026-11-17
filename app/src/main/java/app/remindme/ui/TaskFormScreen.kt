@@ -24,6 +24,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,15 +44,21 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneOffset
 
-/** The manual form: the owner's way to create a task by hand. */
+/** The manual form: the owner's way to create a task by hand, or to change the one with [taskId]. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TaskFormScreen(app: RemindMeApp, onClose: () -> Unit) {
+fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
     val context = LocalContext.current
-    val start = remember { LocalDateTime.now().plusHours(1).withMinute(0).withSecond(0).withNano(0) }
-    var title by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf(start.toLocalDate()) }
-    var time by remember { mutableStateOf(start.toLocalTime()) }
+    val editing = remember(taskId) { taskId?.let { id -> app.tools.list().firstOrNull { it.id == id } } }
+    if (taskId != null && editing == null) {
+        // The task was done or deleted meanwhile, for instance from its notification.
+        LaunchedEffect(taskId) { onClose() }
+        return
+    }
+    val start = remember(taskId) { editing?.due ?: LocalDateTime.now().plusHours(1).withMinute(0).withSecond(0).withNano(0) }
+    var title by remember(taskId) { mutableStateOf(editing?.title ?: "") }
+    var date by remember(taskId) { mutableStateOf(start.toLocalDate()) }
+    var time by remember(taskId) { mutableStateOf(start.toLocalTime()) }
     var refusal by remember { mutableStateOf<String?>(null) }
     var pickingDate by remember { mutableStateOf(false) }
     var pickingTime by remember { mutableStateOf(false) }
@@ -59,7 +66,7 @@ fun TaskFormScreen(app: RemindMeApp, onClose: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("New task") },
+                title = { Text(if (editing == null) "New task" else "Edit task") },
                 navigationIcon = { TextButton(onClick = onClose) { Text("Cancel") } },
             )
         },
@@ -83,7 +90,8 @@ fun TaskFormScreen(app: RemindMeApp, onClose: () -> Unit) {
             refusal?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(
                 onClick = {
-                    when (val result = app.tools.create(TaskDraft(title = title, due = LocalDateTime.of(date, time)))) {
+                    val draft = TaskDraft(title = title, due = LocalDateTime.of(date, time))
+                    when (val result = if (editing == null) app.tools.create(draft) else app.tools.update(editing.id, draft)) {
                         is ToolResult.Ok -> onClose()
                         is ToolResult.Refused -> refusal = result.reason
                     }
