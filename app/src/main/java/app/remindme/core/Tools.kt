@@ -25,7 +25,7 @@ class Tools(
         val title = draft.title.trim()
         if (title.isEmpty()) return ToolResult.Refused(NEEDS_TITLE)
         if (draft.due <= now) return ToolResult.Refused(ALREADY_PASSED)
-        val task = store.put(Task(title = title, due = draft.due, handledUntil = now))
+        val task = store.put(Task(title = title, due = draft.due, handledUntil = now, style = draft.style))
         schedule(task)
         return ToolResult.Ok(task)
     }
@@ -41,11 +41,18 @@ class Tools(
         val title = draft.title.trim()
         if (title.isEmpty()) return ToolResult.Refused(NEEDS_TITLE)
         val edited = if (draft.due == task.due) {
-            task.copy(title = title)
+            task.copy(title = title, style = draft.style)
         } else {
             if (draft.due <= now) return ToolResult.Refused(ALREADY_PASSED)
             announcer.clear(id)
-            task.copy(title = title, due = draft.due, handledUntil = now, snoozedUntil = null)
+            task.copy(
+                title = title,
+                due = draft.due,
+                style = draft.style,
+                handledUntil = now,
+                snoozedUntil = null,
+                ringingUntil = null,
+            )
         }
         schedule(store.put(edited))
         return ToolResult.Ok(edited)
@@ -78,7 +85,7 @@ class Tools(
     @Synchronized
     fun done(id: Long): Task? {
         val task = store.get(id)?.takeIf { it.doneAt == null } ?: return null
-        schedule(store.put(task.copy(doneAt = clock.now())))
+        schedule(store.put(task.copy(doneAt = clock.now(), ringingUntil = null)))
         announcer.clear(id)
         return task
     }
@@ -87,7 +94,7 @@ class Tools(
     @Synchronized
     fun snooze(id: Long) {
         val task = store.get(id)?.takeIf { it.doneAt == null } ?: return
-        schedule(store.put(task.copy(snoozedUntil = clock.now().plus(SNOOZE_LENGTH))))
+        schedule(store.put(task.copy(snoozedUntil = clock.now().plus(SNOOZE_LENGTH), ringingUntil = null)))
         announcer.clear(id)
     }
 
@@ -95,7 +102,7 @@ class Tools(
     @Synchronized
     fun stop(id: Long) {
         val task = store.get(id)?.takeIf { it.doneAt == null } ?: return
-        schedule(store.put(task.copy(snoozedUntil = null)))
+        schedule(store.put(task.copy(snoozedUntil = null, ringingUntil = null)))
         announcer.clear(id)
     }
 
@@ -123,13 +130,27 @@ class Tools(
     }
 
     private fun deliver(task: Task, fire: Fire, caughtUp: Boolean) {
-        val handled = store.put(task.copy(handledUntil = maxOf(task.handledUntil, fire.at)))
+        val handledUntil = maxOf(task.handledUntil, fire.at)
+        if (fire.kind == FireKind.RING_END) {
+            // Nobody answered: the ring gives way to a notification that stays until the owner deals with it.
+            val quiet = store.put(task.copy(handledUntil = handledUntil, ringingUntil = null))
+            announcer.announce(Announcement(task.id, fire.kind, task.title, task.due, late = true, ring = false))
+            schedule(quiet)
+            return
+        }
         val delivered = clock.instant()
-        val scheduled = fire.at.atZone(clock.zone()).toInstant()
-        fireLog.record(
-            FireRecord(task.id, task.title, fire.kind, fire.at, delivered, Duration.between(scheduled, delivered), caughtUp),
+        val lateness = Duration.between(fire.at.atZone(clock.zone()).toInstant(), delivered)
+        val late = lateness >= LATE_AFTER
+        // An alarm the phone slept through is told quietly at start-up; one merely delivered late still rings.
+        val ring = task.style == DeliveryStyle.ALARM && !(caughtUp && late)
+        val handled = store.put(
+            task.copy(
+                handledUntil = handledUntil,
+                ringingUntil = if (ring) clock.now().plus(RING_LENGTH) else task.ringingUntil,
+            ),
         )
-        announcer.announce(Announcement(task.id, fire.kind, task.title, task.due, late = caughtUp))
+        fireLog.record(FireRecord(task.id, task.title, fire.kind, fire.at, delivered, lateness, caughtUp))
+        announcer.announce(Announcement(task.id, fire.kind, task.title, task.due, late = late, ring = ring))
         schedule(handled)
     }
 
@@ -142,11 +163,16 @@ class Tools(
         return listOfNotNull(
             Fire(task.id, FireKind.DUE, task.due),
             task.snoozedUntil?.let { Fire(task.id, FireKind.SNOOZE, it) },
+            task.ringingUntil?.let { Fire(task.id, FireKind.RING_END, it) },
         ).filter { it.at > task.handledUntil }
     }
 
     private companion object {
         val SNOOZE_LENGTH: Duration = Duration.ofMinutes(10)
+        val RING_LENGTH: Duration = Duration.ofMinutes(10)
+
+        /** From this much lateness on, the owner is told when the task was due instead of "due now". */
+        val LATE_AFTER: Duration = Duration.ofMinutes(1)
         const val NEEDS_TITLE = "A task needs a title."
         const val ALREADY_PASSED = "That due time has already passed."
         const val NO_SUCH_TASK = "That task is no longer on the list."

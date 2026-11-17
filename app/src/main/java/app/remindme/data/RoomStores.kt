@@ -1,5 +1,6 @@
 package app.remindme.data
 
+import app.remindme.core.DeliveryStyle
 import app.remindme.core.FireKind
 import app.remindme.core.FireLog
 import app.remindme.core.FireRecord
@@ -30,7 +31,9 @@ class RoomTaskStore(private val dao: TaskDao, private val onChange: () -> Unit) 
         title = title,
         due = LocalDateTime.parse(due),
         handledUntil = LocalDateTime.parse(handledUntil),
+        style = DeliveryStyle.valueOf(style),
         snoozedUntil = snoozedUntil?.let(LocalDateTime::parse),
+        ringingUntil = ringingUntil?.let(LocalDateTime::parse),
         doneAt = doneAt?.let(LocalDateTime::parse),
     )
 
@@ -39,7 +42,9 @@ class RoomTaskStore(private val dao: TaskDao, private val onChange: () -> Unit) 
         title = title,
         due = due.toString(),
         handledUntil = handledUntil.toString(),
+        style = style.name,
         snoozedUntil = snoozedUntil?.toString(),
+        ringingUntil = ringingUntil?.toString(),
         doneAt = doneAt?.toString(),
     )
 }

@@ -21,7 +21,16 @@ interface TaskStore {
     fun delete(id: Long)
 }
 
-enum class FireKind { DUE, SNOOZE }
+enum class FireKind {
+    /** The notification or alarm at the due time. */
+    DUE,
+
+    /** A snooze coming back. */
+    SNOOZE,
+
+    /** Not an announcement of its own: the moment an alarm left ringing gives up and leaves an overdue notification. */
+    RING_END,
+}
 
 /** One announcement the phone is to make for a task, at a moment on the phone's own clock. */
 data class Fire(val taskId: Long, val kind: FireKind, val at: LocalDateTime)
@@ -40,14 +49,17 @@ data class Announcement(
     val kind: FireKind,
     val title: String,
     val due: LocalDateTime,
-    /** True when the fire was missed (the phone was off) and is being announced after the fact. */
+    /** True when the owner is being told after the moment has passed, so the wording says when it was due. */
     val late: Boolean,
+    /** True for a full-screen ring; false for a notification. */
+    val ring: Boolean,
 )
 
 interface Announcer {
+    /** Tells the owner. This replaces whatever the task was showing before: a notification ends its ring. */
     fun announce(announcement: Announcement)
 
-    /** Takes away whatever is still showing for the task. */
+    /** Takes away whatever is still showing for the task and silences it if it is ringing. */
     fun clear(taskId: Long)
 }
 

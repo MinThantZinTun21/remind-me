@@ -6,12 +6,14 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.graphics.drawable.Icon
+import android.util.Log
 import app.remindme.MainActivity
 import app.remindme.R
 import app.remindme.core.Announcement
 import app.remindme.core.Announcer
 import app.remindme.ui.Times
 
+/** Tells the owner on the phone: a notification, or a ring handed to [RingService]. */
 class NotificationAnnouncer(private val context: Context) : Announcer {
     private val notifications = context.getSystemService(NotificationManager::class.java)
 
@@ -22,6 +24,35 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
     }
 
     override fun announce(announcement: Announcement) {
+        if (announcement.ring && ring(announcement)) return
+        silence(announcement.taskId)
+        notify(announcement)
+    }
+
+    override fun clear(taskId: Long) {
+        silence(taskId)
+        notifications.cancel(taskId.toInt())
+    }
+
+    /** Starts the ring. Returns false when the phone refuses, so the owner at least gets a notification. */
+    private fun ring(announcement: Announcement): Boolean {
+        Ringing.add(RingingTask(announcement.taskId, announcement.title, announcement.due))
+        return try {
+            RingService.sync(context)
+            notifications.cancel(announcement.taskId.toInt())
+            true
+        } catch (refused: RuntimeException) {
+            Log.w(TAG, "The phone refused to start the ring", refused)
+            Ringing.remove(announcement.taskId)
+            false
+        }
+    }
+
+    private fun silence(taskId: Long) {
+        if (Ringing.remove(taskId)) RingService.sync(context)
+    }
+
+    private fun notify(announcement: Announcement) {
         val taskId = announcement.taskId
         val open = PendingIntent.getActivity(
             context,
@@ -45,10 +76,6 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
         notifications.notify(taskId.toInt(), notification)
     }
 
-    override fun clear(taskId: Long) {
-        notifications.cancel(taskId.toInt())
-    }
-
     private fun action(label: String, action: String, taskId: Long): Notification.Action =
         Notification.Action.Builder(null as Icon?, label, AnswerReceiver.intent(context, action, taskId)).build()
 
@@ -60,6 +87,7 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
         }
 
     private companion object {
+        const val TAG = "NotificationAnnouncer"
         const val CHANNEL_NOTIFICATIONS = "task-notifications"
     }
 }

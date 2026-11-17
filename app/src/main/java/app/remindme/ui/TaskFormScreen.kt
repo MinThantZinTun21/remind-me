@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -17,6 +18,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -36,6 +40,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import android.text.format.DateFormat
 import app.remindme.RemindMeApp
+import app.remindme.core.DeliveryStyle
 import app.remindme.core.TaskDraft
 import app.remindme.core.ToolResult
 import java.time.Instant
@@ -59,20 +64,31 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
     var title by remember(taskId) { mutableStateOf(editing?.title ?: "") }
     var date by remember(taskId) { mutableStateOf(start.toLocalDate()) }
     var time by remember(taskId) { mutableStateOf(start.toLocalTime()) }
+    var style by remember(taskId) { mutableStateOf(editing?.style ?: DeliveryStyle.NOTIFICATION) }
     var refusal by remember { mutableStateOf<String?>(null) }
     var pickingDate by remember { mutableStateOf(false) }
     var pickingTime by remember { mutableStateOf(false) }
+
+    fun save() {
+        val draft = TaskDraft(title = title, due = LocalDateTime.of(date, time), style = style)
+        when (val result = if (editing == null) app.tools.create(draft) else app.tools.update(editing.id, draft)) {
+            is ToolResult.Ok -> onClose()
+            is ToolResult.Refused -> refusal = result.reason
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (editing == null) "New task" else "Edit task") },
                 navigationIcon = { TextButton(onClick = onClose) { Text("Cancel") } },
+                // Save sits in the bar so the keyboard never covers it.
+                actions = { Button(onClick = ::save, modifier = Modifier.padding(end = 12.dp)) { Text("Save") } },
             )
         },
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
+            Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             OutlinedTextField(
@@ -88,16 +104,27 @@ fun TaskFormScreen(app: RemindMeApp, taskId: Long?, onClose: () -> Unit) {
                 OutlinedButton(onClick = { pickingTime = true }, modifier = Modifier.weight(1f)) { Text(Times.time(context, time)) }
             }
             refusal?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Button(
-                onClick = {
-                    val draft = TaskDraft(title = title, due = LocalDateTime.of(date, time))
-                    when (val result = if (editing == null) app.tools.create(draft) else app.tools.update(editing.id, draft)) {
-                        is ToolResult.Ok -> onClose()
-                        is ToolResult.Refused -> refusal = result.reason
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("At the due time", style = MaterialTheme.typography.labelLarge)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    DeliveryStyle.entries.forEachIndexed { index, choice ->
+                        SegmentedButton(
+                            selected = style == choice,
+                            onClick = { style = choice },
+                            shape = SegmentedButtonDefaults.itemShape(index, DeliveryStyle.entries.size),
+                        ) { Text(if (choice == DeliveryStyle.ALARM) "Alarm" else "Notification") }
                     }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Save") }
+                }
+                Text(
+                    if (style == DeliveryStyle.ALARM) {
+                        "Rings full-screen until you answer, even on silent."
+                    } else {
+                        "A normal notification with sound."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 

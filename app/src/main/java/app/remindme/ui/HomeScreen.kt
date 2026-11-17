@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.remindme.RemindMeApp
+import app.remindme.core.DeliveryStyle
 import app.remindme.core.Section
 import app.remindme.core.Task
 import app.remindme.core.section
@@ -111,7 +112,7 @@ fun HomeScreen(app: RemindMeApp, onNewTask: () -> Unit, onEditTask: (Long) -> Un
                         TaskRow(
                             task = task,
                             overdue = section == Section.OVERDUE,
-                            due = Times.dateAndTime(context, task.due),
+                            due = Times.dateAndTime(context, task.due) + if (task.style == DeliveryStyle.ALARM) "  ·  Alarm" else "",
                             onOpen = { onEditTask(task.id) },
                             onDone = { offerUndo("Marked done", app.tools.done(task.id)) },
                             onDelete = { offerUndo("Task deleted", app.tools.delete(task.id)) },

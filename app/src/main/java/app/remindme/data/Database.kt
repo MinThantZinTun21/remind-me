@@ -17,7 +17,9 @@ data class TaskRow(
     val title: String,
     val due: String,
     val handledUntil: String,
+    val style: String,
     val snoozedUntil: String?,
+    val ringingUntil: String?,
     val doneAt: String?,
 )
 

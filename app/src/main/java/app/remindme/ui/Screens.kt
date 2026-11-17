@@ -22,11 +22,17 @@ sealed interface Screen {
     data object FireLog : Screen
 }
 
+/** The app's look: Material 3 in the phone's own colours, light or dark as the phone is. */
+@Composable
+fun RemindMeTheme(content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val colors = if (isSystemInDarkTheme()) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    MaterialTheme(colorScheme = colors, content = content)
+}
+
 /** [taskToOpen] is set when the owner taps a notification; the screens show that task and clear it. */
 @Composable
 fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>) {
-    val context = LocalContext.current
-    val colors = if (isSystemInDarkTheme()) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
 
     LaunchedEffect(taskToOpen.value) {
@@ -34,7 +40,7 @@ fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>) {
         taskToOpen.value = null
     }
 
-    MaterialTheme(colorScheme = colors) {
+    RemindMeTheme {
         BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
         when (val current = screen) {
             Screen.Home -> HomeScreen(
