@@ -31,7 +31,7 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
         val notification = Notification.Builder(context, CHANNEL_NOTIFICATIONS)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(announcement.title)
-            .setContentText("Due ${Times.time(context, announcement.due)}")
+            .setContentText(wording(announcement))
             .setCategory(Notification.CATEGORY_REMINDER)
             .setShowWhen(true)
             .setContentIntent(open)
@@ -39,6 +39,13 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
             .build()
         notifications.notify(announcement.taskId.toInt(), notification)
     }
+
+    private fun wording(announcement: Announcement): String =
+        if (announcement.late) {
+            "Was due ${Times.dateAndTime(context, announcement.due)}"
+        } else {
+            "Due ${Times.time(context, announcement.due)}"
+        }
 
     private companion object {
         const val CHANNEL_NOTIFICATIONS = "task-notifications"

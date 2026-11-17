@@ -54,7 +54,7 @@ fun FireLogScreen(app: RemindMeApp, onClose: () -> Unit) {
                                     "Arrived ${Times.dateAndTime(context, delivered)}",
                             )
                         },
-                        trailingContent = { Text(lateness(record)) },
+                        trailingContent = { Text(lateness(record) + if (record.caughtUp) "\ncaught up" else "") },
                     )
                     HorizontalDivider()
                 }

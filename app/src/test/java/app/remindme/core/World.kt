@@ -24,6 +24,13 @@ class World(now: String, zone: String = "Asia/Yangon") {
         }
         clock.local = target
     }
+
+    /** The phone is off until [time]: nothing is delivered meanwhile, its alarm list is wiped, and the app reschedules at start-up. */
+    fun restartPhoneAt(time: String) {
+        clock.local = at(time)
+        scheduler.wipe()
+        tools.reschedule()
+    }
 }
 
 fun at(time: String): LocalDateTime = LocalDateTime.parse(time)
@@ -51,10 +58,17 @@ class InMemoryTaskStore : TaskStore {
 
 class RecordingScheduler : FireScheduler {
     private val byTask = mutableMapOf<Long, List<Fire>>()
+    private val zones = mutableMapOf<Long, ZoneId>()
 
-    override fun replace(taskId: Long, fires: List<Fire>) {
+    override fun replace(taskId: Long, fires: List<Fire>, zone: ZoneId) {
         if (fires.isEmpty()) byTask.remove(taskId) else byTask[taskId] = fires
+        zones[taskId] = zone
     }
+
+    /** The real moments the pending fires were scheduled for. */
+    fun pendingInstants(): List<Instant> = pending().map { it.at.atZone(zones.getValue(it.taskId)).toInstant() }
+
+    fun wipe() = byTask.clear()
 
     fun pending(): List<Fire> = byTask.values.flatten().sortedBy { it.at }
     fun remove(fire: Fire) {
@@ -75,3 +89,4 @@ class RecordingFireLog : FireLog {
         entries += record
     }
 }
+

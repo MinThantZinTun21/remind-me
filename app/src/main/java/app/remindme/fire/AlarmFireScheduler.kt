@@ -19,13 +19,13 @@ import java.time.ZoneId
 class AlarmFireScheduler(private val context: Context) : FireScheduler {
     private val alarms = context.getSystemService(AlarmManager::class.java)
 
-    override fun replace(taskId: Long, fires: List<Fire>) {
+    override fun replace(taskId: Long, fires: List<Fire>, zone: ZoneId) {
         for (kind in FireKind.entries) {
             val fire = fires.firstOrNull { it.kind == kind }
             if (fire == null) {
                 alarms.cancel(broadcast(taskId, kind, null))
             } else {
-                val at = fire.at.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                val at = fire.at.atZone(zone).toInstant().toEpochMilli()
                 alarms.setAlarmClock(AlarmManager.AlarmClockInfo(at, openApp()), broadcast(taskId, kind, fire.at))
             }
         }

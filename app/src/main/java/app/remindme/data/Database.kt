@@ -28,6 +28,7 @@ data class FireLogRow(
     val scheduledFor: String,
     val deliveredAtMillis: Long,
     val lateMillis: Long,
+    val caughtUp: Boolean,
 )
 
 @Dao

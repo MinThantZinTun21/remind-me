@@ -38,20 +38,38 @@ class Tools(
     @Synchronized
     fun fire(fire: Fire) {
         val task = store.get(fire.taskId) ?: return
-        deliver(task, fire)
+        // The alarm system can deliver a fire the app has already caught up on, or one from before an edit.
+        if (fire !in pendingFires(task)) return
+        deliver(task, fire, caughtUp = false)
     }
 
-    private fun deliver(task: Task, fire: Fire) {
+    /**
+     * Hands every pending fire to the alarm system again. Called when the phone starts, when the clock or
+     * the time zone changes, when the app is updated and when it is opened. A fire that came due meanwhile
+     * is announced now, once, as late.
+     */
+    @Synchronized
+    fun reschedule() {
+        val now = clock.now()
+        for (task in store.all()) {
+            val missed = pendingFires(task).filter { it.at <= now }.maxByOrNull { it.at }
+            if (missed != null) deliver(task, missed, caughtUp = true) else schedule(task)
+        }
+    }
+
+    private fun deliver(task: Task, fire: Fire, caughtUp: Boolean) {
         val handled = store.put(task.copy(handledUntil = maxOf(task.handledUntil, fire.at)))
         val delivered = clock.instant()
         val scheduled = fire.at.atZone(clock.zone()).toInstant()
-        fireLog.record(FireRecord(task.id, task.title, fire.kind, fire.at, delivered, Duration.between(scheduled, delivered)))
-        announcer.announce(Announcement(task.id, fire.kind, task.title, task.due))
+        fireLog.record(
+            FireRecord(task.id, task.title, fire.kind, fire.at, delivered, Duration.between(scheduled, delivered), caughtUp),
+        )
+        announcer.announce(Announcement(task.id, fire.kind, task.title, task.due, late = caughtUp))
         schedule(handled)
     }
 
     private fun schedule(task: Task) {
-        scheduler.replace(task.id, pendingFires(task))
+        scheduler.replace(task.id, pendingFires(task), clock.zone())
     }
 
     private fun pendingFires(task: Task): List<Fire> =

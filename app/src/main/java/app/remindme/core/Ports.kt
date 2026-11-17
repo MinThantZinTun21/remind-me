@@ -27,12 +27,22 @@ enum class FireKind { DUE }
 data class Fire(val taskId: Long, val kind: FireKind, val at: LocalDateTime)
 
 interface FireScheduler {
-    /** Makes [fires] the complete set of scheduled fires for the task, cancelling any others it had. */
-    fun replace(taskId: Long, fires: List<Fire>)
+    /**
+     * Makes [fires] the complete set of scheduled fires for the task, cancelling any others it had.
+     * Each fire's wall-clock time is to be read in [zone].
+     */
+    fun replace(taskId: Long, fires: List<Fire>, zone: ZoneId)
 }
 
 /** What the owner is told when a fire is delivered. */
-data class Announcement(val taskId: Long, val kind: FireKind, val title: String, val due: LocalDateTime)
+data class Announcement(
+    val taskId: Long,
+    val kind: FireKind,
+    val title: String,
+    val due: LocalDateTime,
+    /** True when the fire was missed (the phone was off) and is being announced after the fact. */
+    val late: Boolean,
+)
 
 interface Announcer {
     fun announce(announcement: Announcement)
@@ -46,6 +56,8 @@ data class FireRecord(
     val scheduledFor: LocalDateTime,
     val deliveredAt: Instant,
     val late: Duration,
+    /** True when the app found the fire past due at rescheduling, instead of the alarm system delivering it. */
+    val caughtUp: Boolean,
 )
 
 interface FireLog {

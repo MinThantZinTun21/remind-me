@@ -46,6 +46,7 @@ class RoomFireLog(private val dao: FireLogDao, private val onChange: () -> Unit)
                 scheduledFor = record.scheduledFor.toString(),
                 deliveredAtMillis = record.deliveredAt.toEpochMilli(),
                 lateMillis = record.late.toMillis(),
+                caughtUp = record.caughtUp,
             ),
         )
         dao.trim(KEPT_RECORDS)
@@ -60,6 +61,7 @@ class RoomFireLog(private val dao: FireLogDao, private val onChange: () -> Unit)
             scheduledFor = LocalDateTime.parse(it.scheduledFor),
             deliveredAt = Instant.ofEpochMilli(it.deliveredAtMillis),
             late = Duration.ofMillis(it.lateMillis),
+            caughtUp = it.caughtUp,
         )
     }
 

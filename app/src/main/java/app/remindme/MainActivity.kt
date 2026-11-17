@@ -15,4 +15,10 @@ class MainActivity : ComponentActivity() {
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
         setContent { RemindMeScreens(RemindMeApp.from(this)) }
     }
+
+    override fun onStart() {
+        super.onStart()
+        // Opening the app is one more chance to put back anything the phone dropped.
+        RemindMeApp.from(this).tools.reschedule()
+    }
 }

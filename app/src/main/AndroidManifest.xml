@@ -4,6 +4,7 @@
     <!-- Exact alarms without asking: the app's main job is firing at an exact time. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".RemindMeApp"
@@ -25,6 +26,21 @@
 
         <receiver
             android:name=".fire.FireReceiver"
+            android:directBootAware="true"
             android:exported="false" />
+
+        <!-- The phone's alarm list is wiped by a restart and goes stale when the clock or time zone changes. -->
+        <receiver
+            android:name=".fire.RescheduleReceiver"
+            android:directBootAware="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
