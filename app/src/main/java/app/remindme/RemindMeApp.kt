@@ -3,6 +3,7 @@ package app.remindme
 import android.app.Application
 import android.content.Context
 import androidx.compose.runtime.mutableIntStateOf
+import app.remindme.agent.Agent
 import app.remindme.core.Clock
 import app.remindme.core.Fires
 import app.remindme.core.Tools
@@ -21,6 +22,8 @@ class RemindMeApp : Application() {
 
     lateinit var tools: Tools
         private set
+    lateinit var agent: Agent
+        private set
     lateinit var fires: Fires
         private set
     lateinit var fireLog: RoomFireLog
@@ -35,6 +38,7 @@ class RemindMeApp : Application() {
         val announcer = NotificationAnnouncer(this)
         fires = Fires(store, AlarmFireScheduler(this), announcer, fireLog, PhoneClock)
         tools = Tools(store, fires, announcer, PhoneClock)
+        agent = Agent(tools, PhoneClock)
     }
 
     companion object {

@@ -16,6 +16,9 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1"
+        // The on-phone model runtime ships native code; the one phone this app is for is arm64.
+        ndk { abiFilters += "arm64-v8a" }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures { compose = true }
@@ -34,6 +37,12 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
+    // The agent's model runtime. 0.18.1 is the version the LFM3-1.7B model file was built and tested for.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
 
     testImplementation("junit:junit:4.13.2")
+
+    // Runs the real model on the phone over a list of sentences: see AgentOnPhoneTest.
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

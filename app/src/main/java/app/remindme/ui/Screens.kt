@@ -3,11 +3,14 @@ package app.remindme.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -26,10 +29,18 @@ import app.remindme.setup.SetUp
 sealed interface Screen {
     data object Home : Screen
     data object NewTask : Screen
+    /** [draft] is a sentence the user picked to try, already in the text field. */
+    data class Agent(val draft: String = "") : Screen
     data class EditTask(val taskId: Long) : Screen
     data object History : Screen
     data object SetUp : Screen
     data object FireLog : Screen
+}
+
+/** The way back to the task list, the same on every screen. */
+@Composable
+fun BackButton(onBack: () -> Unit) {
+    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
 }
 
 /** The app's look: Material 3 in the phone's own colours, light or dark as the phone is. */
@@ -48,7 +59,7 @@ fun MenuScreen(title: String, onBack: (() -> Unit)?, content: @Composable (Paddi
         topBar = {
             TopAppBar(
                 title = { Text(title) },
-                navigationIcon = { if (onBack != null) TextButton(onClick = onBack) { Text("Back") } },
+                navigationIcon = { if (onBack != null) BackButton(onBack) },
             )
         },
         content = content,
@@ -82,12 +93,14 @@ fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>, resumes: 
                 app,
                 notificationsOff = remember(resumes.intValue) { !setUp.notificationsOn() },
                 onNewTask = { screen = Screen.NewTask },
+                onAgent = { draft -> screen = Screen.Agent(draft) },
                 onEditTask = { screen = Screen.EditTask(it) },
                 onHistory = { screen = Screen.History },
                 onSetUp = { screen = Screen.SetUp },
                 onFireLog = { screen = Screen.FireLog },
             )
             Screen.NewTask -> TaskFormScreen(app, taskId = null, onClose = { screen = Screen.Home })
+            is Screen.Agent -> AgentScreen(app, draft = current.draft, onEditTask = { screen = Screen.EditTask(it) }, onClose = { screen = Screen.Home })
             is Screen.EditTask -> TaskFormScreen(app, taskId = current.taskId, onClose = { screen = Screen.Home })
             Screen.History -> HistoryScreen(app, onClose = { screen = Screen.Home })
             Screen.SetUp -> SetUpScreen(setUp, resumes.intValue, firstRun = false, onClose = { screen = Screen.Home })

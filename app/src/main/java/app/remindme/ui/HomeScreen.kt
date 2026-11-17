@@ -5,20 +5,25 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -28,6 +33,7 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,11 +50,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.remindme.RemindMeApp
 import app.remindme.wording.Times
 import app.remindme.wording.label
 import app.remindme.wording.inWords
+import app.remindme.wording.leadTimesInWords
 import app.remindme.core.Section
 import app.remindme.core.Task
 import app.remindme.core.ToolResult
@@ -63,6 +75,7 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     app: RemindMeApp,
     onNewTask: () -> Unit,
+    onAgent: (draft: String) -> Unit,
     onEditTask: (Long) -> Unit,
     notificationsOff: Boolean,
     onHistory: () -> Unit,
@@ -107,20 +120,13 @@ fun HomeScreen(
             )
         },
         snackbarHost = { SnackbarHost(undoBar) },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onNewTask,
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text("New task") },
-            )
-        },
+        // The agent is the main way in, so it sits where the thumb is; the form is the by-hand way beside it.
+        bottomBar = { TellBar(onAgent = { onAgent("") }, onNewTask = onNewTask) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (notificationsOff) NotificationsOffWarning(onSetUp)
             if (tasks.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No tasks yet. Tap “New task” to add one.", style = MaterialTheme.typography.bodyLarge)
-                }
+                NothingYet(onAgent)
             } else {
                 val sections = tasks.groupBy { it.section(now) }
                 LazyColumn(Modifier.fillMaxSize()) {
@@ -131,19 +137,24 @@ fun HomeScreen(
                             TaskLine(
                                 task = task,
                                 overdue = section == Section.OVERDUE,
-                                due = listOfNotNull(
-                                    Times.dateAndTime(context, task.due),
+                                // Under Today and Tomorrow the heading already says the day.
+                                due = if (section == Section.TODAY || section == Section.TOMORROW) {
+                                    Times.time(context, task.due)
+                                } else {
+                                    Times.dateAndTime(context, task.due)
+                                },
+                                details = listOfNotNull(
                                     task.style.label,
                                     task.repeat.inWords(task.firstDue),
-                                ).joinToString("  ·  "),
+                                    task.leadTimesInWords(),
+                                ),
                                 onOpen = { onEditTask(task.id) },
                                 onDone = { offerUndo("Marked done", task, app.tools.done(task.id)) },
                                 onDelete = { offerUndo("Task deleted", task, app.tools.delete(task.id)) },
                             )
-                            HorizontalDivider()
                         }
                     }
-                    item { Box(Modifier.padding(bottom = 88.dp)) }
+                    item { Box(Modifier.padding(bottom = 16.dp)) }
                 }
             }
         }
@@ -181,8 +192,18 @@ private fun SectionHeading(section: Section) {
     )
 }
 
+/** The due time leads the second line, because when is what the user looks a task up for. */
 @Composable
-private fun TaskLine(task: Task, overdue: Boolean, due: String, onOpen: () -> Unit, onDone: () -> Unit, onDelete: () -> Unit) {
+private fun TaskLine(
+    task: Task,
+    overdue: Boolean,
+    due: String,
+    details: List<String>,
+    onOpen: () -> Unit,
+    onDone: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val dueColor = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     ListItem(
         modifier = Modifier.clickable(onClick = onOpen),
         leadingContent = {
@@ -192,12 +213,66 @@ private fun TaskLine(task: Task, overdue: Boolean, due: String, onOpen: () -> Un
                 modifier = Modifier.semantics { contentDescription = "Mark ${task.title} done" },
             )
         },
-        headlineContent = { Text(task.title) },
+        headlineContent = { Text(task.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
-            Text(due, color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = dueColor, fontWeight = FontWeight.Medium)) { append(due) }
+                    for (detail in details) append("  ·  $detail")
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         },
         trailingContent = {
-            IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "Delete ${task.title}") }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Filled.Delete, contentDescription = "Delete ${task.title}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         },
     )
+}
+
+/** The first thing a new user sees: what to do, and sentences to try with one tap. */
+@Composable
+private fun NothingYet(onAgent: (String) -> Unit) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.Center) {
+        Text("Nothing to remember yet", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "Tell Remind Me in your own words. It works out the time, the repeat and whether it is an alarm.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+        )
+        for (example in EXAMPLES) SuggestionChip(onClick = { onAgent(example) }, label = { Text(example) })
+    }
+}
+
+/** The way in to the agent, docked at the bottom, with the by-hand form beside it. */
+@Composable
+private fun TellBar(onAgent: () -> Unit, onNewTask: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+        Row(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                onClick = onAgent,
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                modifier = Modifier.weight(1f).height(56.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Create, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "Tell Remind Me…",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 12.dp),
+                    )
+                }
+            }
+            FilledTonalIconButton(onClick = onNewTask, modifier = Modifier.padding(start = 12.dp).size(56.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = "New task by hand")
+            }
+        }
+    }
 }
