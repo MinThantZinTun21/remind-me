@@ -53,7 +53,13 @@ import kotlinx.coroutines.launch
 /** The task list, grouped as Overdue, Today, Tomorrow and Later. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(app: RemindMeApp, onNewTask: () -> Unit, onEditTask: (Long) -> Unit, onFireLog: () -> Unit) {
+fun HomeScreen(
+    app: RemindMeApp,
+    onNewTask: () -> Unit,
+    onEditTask: (Long) -> Unit,
+    onHistory: () -> Unit,
+    onFireLog: () -> Unit,
+) {
     val context = LocalContext.current
     val tasks = remember(app.revision.intValue) { app.tools.list() }
     // The grouping moves with the clock, so it is looked at again while the list is on screen.
@@ -84,6 +90,7 @@ fun HomeScreen(app: RemindMeApp, onNewTask: () -> Unit, onEditTask: (Long) -> Un
                 actions = {
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Menu") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("History") }, onClick = { menuOpen = false; onHistory() })
                         DropdownMenuItem(text = { Text("Fire log") }, onClick = { menuOpen = false; onFireLog() })
                     }
                 },

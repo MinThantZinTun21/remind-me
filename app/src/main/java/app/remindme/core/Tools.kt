@@ -116,8 +116,32 @@ class Tools(
     @Synchronized
     fun list(): List<Task> = store.all().filter { it.doneAt == null }.sortedBy { it.due }
 
+    /** The one-time tasks marked done in the last thirty days, most recently done first. */
+    @Synchronized
+    fun history(): List<Task> {
+        forgetOldHistory()
+        return store.all().filter { it.doneAt != null }.sortedByDescending { it.doneAt }
+    }
+
     /**
-     * The owner says they did it. A one-time task leaves the list. A repeating task moves to its next
+     * The owner takes a task back out of history. It returns to the list: overdue and quiet when its due
+     * time has passed, otherwise with the fires still ahead of it scheduled again.
+     */
+    @Synchronized
+    fun notDone(id: Long) {
+        forgetOldHistory()
+        val task = store.get(id)?.takeIf { it.doneAt != null } ?: return
+        val now = clock.now()
+        schedule(store.put(task.copy(doneAt = null, snoozedUntil = null, handledUntil = maxOf(task.handledUntil, now))))
+    }
+
+    private fun forgetOldHistory() {
+        val cutoff = clock.now().minus(HISTORY_KEPT)
+        store.all().filter { it.doneAt != null && it.doneAt <= cutoff }.forEach { store.delete(it.id) }
+    }
+
+    /**
+     * The owner says they did it. A one-time task leaves the list for history. A repeating task moves to its next
      * occurrence: done before the due time skips the coming occurrence, and after the last occurrence the
      * task is gone. Returns the task as it was just before, for [restore] to undo, or null when there is no
      * such task still to do.
@@ -176,6 +200,7 @@ class Tools(
     @Synchronized
     fun reschedule() {
         val now = clock.now()
+        forgetOldHistory()
         for (stored in store.all()) {
             val task = occurrenceReachedBy(stored, now)
             val missed = pendingFires(task).filter { it.at <= now }.maxByOrNull { it.at }
@@ -262,6 +287,7 @@ class Tools(
     private companion object {
         val SNOOZE_LENGTH: Duration = Duration.ofMinutes(10)
         val RING_LENGTH: Duration = Duration.ofMinutes(10)
+        val HISTORY_KEPT: Duration = Duration.ofDays(30)
 
         /** From this much lateness on, the owner is told when the task was due instead of "due now". */
         val LATE_AFTER: Duration = Duration.ofMinutes(1)

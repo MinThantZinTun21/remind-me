@@ -19,6 +19,7 @@ sealed interface Screen {
     data object Home : Screen
     data object NewTask : Screen
     data class EditTask(val taskId: Long) : Screen
+    data object History : Screen
     data object FireLog : Screen
 }
 
@@ -47,10 +48,12 @@ fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>) {
                 app,
                 onNewTask = { screen = Screen.NewTask },
                 onEditTask = { screen = Screen.EditTask(it) },
+                onHistory = { screen = Screen.History },
                 onFireLog = { screen = Screen.FireLog },
             )
             Screen.NewTask -> TaskFormScreen(app, taskId = null, onClose = { screen = Screen.Home })
             is Screen.EditTask -> TaskFormScreen(app, taskId = current.taskId, onClose = { screen = Screen.Home })
+            Screen.History -> HistoryScreen(app, onClose = { screen = Screen.Home })
             Screen.FireLog -> FireLogScreen(app, onClose = { screen = Screen.Home })
         }
     }
