@@ -12,6 +12,7 @@ import app.remindme.R
 import app.remindme.core.Announcement
 import app.remindme.core.Announcer
 import app.remindme.ui.Times
+import app.remindme.ui.inWords
 
 /** Tells the owner on the phone: a notification, or a ring handed to [RingService]. */
 class NotificationAnnouncer(private val context: Context) : Announcer {
@@ -60,31 +61,33 @@ class NotificationAnnouncer(private val context: Context) : Announcer {
             MainActivity.openTask(context, taskId),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = Notification.Builder(context, CHANNEL_NOTIFICATIONS)
+        // An early warning, given on time, leads with how long is left; it offers Done but no Snooze.
+        val warning = announcement.leadTime?.takeUnless { announcement.late }
+        val builder = Notification.Builder(context, CHANNEL_NOTIFICATIONS)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(announcement.title)
+            .setContentTitle(if (warning == null) announcement.title else "In ${warning.inWords()}: ${announcement.title}")
             .setContentText(wording(announcement))
             .setCategory(Notification.CATEGORY_REMINDER)
             .setShowWhen(true)
             .setContentIntent(open)
             .setAutoCancel(true)
             .addAction(action("Done", AnswerReceiver.ACTION_DONE, taskId))
-            .addAction(action("Snooze 10 min", AnswerReceiver.ACTION_SNOOZE, taskId))
-            // Swiping the notification away is Stop: the task stays overdue.
+            // Swiping the notification away is Stop: the task stays as it is, overdue once its due time passes.
             .setDeleteIntent(AnswerReceiver.intent(context, AnswerReceiver.ACTION_STOP, taskId))
-            .build()
+        if (announcement.leadTime == null) builder.addAction(action("Snooze 10 min", AnswerReceiver.ACTION_SNOOZE, taskId))
+        val notification = builder.build()
         notifications.notify(taskId.toInt(), notification)
     }
 
     private fun action(label: String, action: String, taskId: Long): Notification.Action =
         Notification.Action.Builder(null as Icon?, label, AnswerReceiver.intent(context, action, taskId)).build()
 
-    private fun wording(announcement: Announcement): String =
-        if (announcement.late) {
-            "Was due ${Times.dateAndTime(context, announcement.due)}"
-        } else {
-            "Due ${Times.time(context, announcement.due)}"
-        }
+    private fun wording(announcement: Announcement): String = when {
+        // Before the due time: an early warning, on time or late.
+        announcement.leadTime != null -> "Due ${Times.dateAndTime(context, announcement.due)}"
+        announcement.late -> "Was due ${Times.dateAndTime(context, announcement.due)}"
+        else -> "Due ${Times.time(context, announcement.due)}"
+    }
 
     private companion object {
         const val TAG = "NotificationAnnouncer"

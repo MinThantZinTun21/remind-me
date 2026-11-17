@@ -1,5 +1,6 @@
 package app.remindme.core
 
+import java.time.Duration
 import java.time.LocalDateTime
 
 /** A thing the owner needs to do, with a due time. See GLOSSARY.md. */
@@ -11,6 +12,8 @@ data class Task(
     /** Every fire at or before this moment has been delivered or deliberately skipped. */
     val handledUntil: LocalDateTime,
     val style: DeliveryStyle = DeliveryStyle.NOTIFICATION,
+    /** How long before the due time each early warning comes: none, one or two, longest first. */
+    val leadTimes: List<Duration> = emptyList(),
     /** When a snooze brings the occurrence back; null when none was asked for. */
     val snoozedUntil: LocalDateTime? = null,
     /** When an alarm that is ringing unanswered gives up; null when the task is not ringing. */
@@ -37,4 +40,5 @@ data class TaskDraft(
     val title: String,
     val due: LocalDateTime,
     val style: DeliveryStyle = DeliveryStyle.NOTIFICATION,
+    val leadTimes: List<Duration> = emptyList(),
 )

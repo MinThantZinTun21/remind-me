@@ -22,6 +22,12 @@ interface TaskStore {
 }
 
 enum class FireKind {
+    /** The early warning of the task's longer (or only) lead time. */
+    WARNING_1,
+
+    /** The early warning of the shorter of two lead times. */
+    WARNING_2,
+
     /** The notification or alarm at the due time. */
     DUE,
 
@@ -53,6 +59,8 @@ data class Announcement(
     val late: Boolean,
     /** True for a full-screen ring; false for a notification. */
     val ring: Boolean,
+    /** For an early warning, how long before the due time it was meant to come; null for every other fire. */
+    val leadTime: Duration? = null,
 )
 
 interface Announcer {

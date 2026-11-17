@@ -22,40 +22,56 @@ class Tools(
     @Synchronized
     fun create(draft: TaskDraft): ToolResult {
         val now = clock.now()
-        val title = draft.title.trim()
-        if (title.isEmpty()) return ToolResult.Refused(NEEDS_TITLE)
+        refusal(draft)?.let { return it }
         if (draft.due <= now) return ToolResult.Refused(ALREADY_PASSED)
-        val task = store.put(Task(title = title, due = draft.due, handledUntil = now, style = draft.style))
+        // Starting the watermark at now is what skips a warning whose moment has already passed.
+        val task = store.put(
+            Task(
+                title = draft.title.trim(),
+                due = draft.due,
+                handledUntil = now,
+                style = draft.style,
+                leadTimes = draft.leadTimes.sortedDescending(),
+            ),
+        )
         schedule(task)
         return ToolResult.Ok(task)
     }
 
     /**
      * Changes a task. Moving the due time starts the task afresh from now: fires from before the edit
-     * are dropped, along with any snooze. An overdue task can keep its due time while its title changes.
+     * are dropped, along with any snooze. An overdue task can keep its due time while the rest changes.
+     * Either way nothing whose moment has already passed is fired because of an edit.
      */
     @Synchronized
     fun update(id: Long, draft: TaskDraft): ToolResult {
         val task = store.get(id)?.takeIf { it.doneAt == null } ?: return ToolResult.Refused(NO_SUCH_TASK)
         val now = clock.now()
-        val title = draft.title.trim()
-        if (title.isEmpty()) return ToolResult.Refused(NEEDS_TITLE)
+        refusal(draft)?.let { return it }
+        val changed = task.copy(
+            title = draft.title.trim(),
+            style = draft.style,
+            leadTimes = draft.leadTimes.sortedDescending(),
+            handledUntil = maxOf(task.handledUntil, now),
+        )
         val edited = if (draft.due == task.due) {
-            task.copy(title = title, style = draft.style)
+            changed
         } else {
             if (draft.due <= now) return ToolResult.Refused(ALREADY_PASSED)
             announcer.clear(id)
-            task.copy(
-                title = title,
-                due = draft.due,
-                style = draft.style,
-                handledUntil = now,
-                snoozedUntil = null,
-                ringingUntil = null,
-            )
+            changed.copy(due = draft.due, handledUntil = now, snoozedUntil = null, ringingUntil = null)
         }
         schedule(store.put(edited))
         return ToolResult.Ok(edited)
+    }
+
+    /** What is wrong with a draft whatever the time is, or null when nothing is. */
+    private fun refusal(draft: TaskDraft): ToolResult.Refused? = when {
+        draft.title.isBlank() -> ToolResult.Refused(NEEDS_TITLE)
+        draft.leadTimes.size > 2 -> ToolResult.Refused("A task can have at most two lead times.")
+        draft.leadTimes.distinct().size < draft.leadTimes.size -> ToolResult.Refused("The two lead times are the same.")
+        draft.leadTimes.any { it < Duration.ofMinutes(1) } -> ToolResult.Refused("A lead time has to be at least one minute.")
+        else -> null
     }
 
     /** Removes a task and its fires. Returns the task as it was, for [restore] to undo, or null when there is none. */
@@ -141,8 +157,10 @@ class Tools(
         val delivered = clock.instant()
         val lateness = Duration.between(fire.at.atZone(clock.zone()).toInstant(), delivered)
         val late = lateness >= LATE_AFTER
-        // An alarm the phone slept through is told quietly at start-up; one merely delivered late still rings.
-        val ring = task.style == DeliveryStyle.ALARM && !(caughtUp && late)
+        // Only the due time rings, never an early warning. An alarm the phone slept through is told quietly
+        // at start-up; one merely delivered late still rings.
+        val leadTime = leadTimeOf(task, fire.kind)
+        val ring = leadTime == null && task.style == DeliveryStyle.ALARM && !(caughtUp && late)
         val handled = store.put(
             task.copy(
                 handledUntil = handledUntil,
@@ -150,7 +168,7 @@ class Tools(
             ),
         )
         fireLog.record(FireRecord(task.id, task.title, fire.kind, fire.at, delivered, lateness, caughtUp))
-        announcer.announce(Announcement(task.id, fire.kind, task.title, task.due, late = late, ring = ring))
+        announcer.announce(Announcement(task.id, fire.kind, task.title, task.due, late = late, ring = ring, leadTime = leadTime))
         schedule(handled)
     }
 
@@ -161,10 +179,18 @@ class Tools(
     private fun pendingFires(task: Task): List<Fire> {
         if (task.doneAt != null) return emptyList()
         return listOfNotNull(
+            task.leadTimes.getOrNull(0)?.let { Fire(task.id, FireKind.WARNING_1, task.due.minus(it)) },
+            task.leadTimes.getOrNull(1)?.let { Fire(task.id, FireKind.WARNING_2, task.due.minus(it)) },
             Fire(task.id, FireKind.DUE, task.due),
             task.snoozedUntil?.let { Fire(task.id, FireKind.SNOOZE, it) },
             task.ringingUntil?.let { Fire(task.id, FireKind.RING_END, it) },
         ).filter { it.at > task.handledUntil }
+    }
+
+    private fun leadTimeOf(task: Task, kind: FireKind): Duration? = when (kind) {
+        FireKind.WARNING_1 -> task.leadTimes.getOrNull(0)
+        FireKind.WARNING_2 -> task.leadTimes.getOrNull(1)
+        else -> null
     }
 
     private companion object {

@@ -18,6 +18,8 @@ data class TaskRow(
     val due: String,
     val handledUntil: String,
     val style: String,
+    /** Lead times in whole minutes, separated by commas; empty when the task has none. */
+    val leadTimes: String,
     val snoozedUntil: String?,
     val ringingUntil: String?,
     val doneAt: String?,
