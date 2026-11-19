@@ -60,13 +60,10 @@ fun ModelsScreen(onClose: () -> Unit) {
     var deleting by remember { mutableStateOf<Models.Installed?>(null) }
     var cancelling by remember { mutableStateOf<String?>(null) }
 
-    // While the screen is open, keep the progress bars current and put finished downloads into place.
+    // While the screen is open, keep the progress bars current; the download job puts finished files in place.
     LaunchedEffect(Unit) {
         while (true) {
-            progress = withContext(Dispatchers.IO) {
-                models.finishDownloads()
-                models.progress()
-            }
+            progress = withContext(Dispatchers.IO) { models.progress() }
             looked++
             delay(1_000)
         }
@@ -246,7 +243,6 @@ private fun DownloadRow(name: String, state: Models.Progress, onCancel: () -> Un
             is Models.Progress.Running -> Triple(state.done, state.total, "Downloading")
             is Models.Progress.Waiting -> Triple(state.done, state.total, state.reason)
             is Models.Progress.Failed -> Triple(0L, 0L, "Failed: ${state.reason}")
-            Models.Progress.Finished -> Triple(1L, 1L, "Finishing")
         }
         if (total > 0) {
             LinearProgressIndicator(progress = { (done.toFloat() / total).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))

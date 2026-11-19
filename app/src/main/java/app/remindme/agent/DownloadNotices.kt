@@ -10,8 +10,8 @@ import app.remindme.R
 import app.remindme.wording.gigabytes
 
 /**
- * What the notification bar shows about model downloads: one live notification with a progress bar while any
- * download is fetching or waiting, then a notice when one is ready or has stopped. Tapping any of them opens
+ * What the notification bar shows about model downloads: a live notification with a progress bar for each
+ * download while it fetches or waits, then a notice when it is ready or has stopped. Tapping any of them opens
  * the Models screen, where a download can be cancelled after a confirm. There is no Cancel button on the
  * notification itself: a stray tap there threw away a download.
  */
@@ -68,6 +68,23 @@ object DownloadNotices {
             .setContentIntent(openModels(context, 0))
         if (line.total > 0) builder.setProgress(1000, (line.done * 1000 / line.total).toInt(), false) else builder.setProgress(0, 0, true)
         return builder.build()
+    }
+
+    /**
+     * The number of one download's live notification. Below the ringing alarm's -1 and the old -2, and apart
+     * from task notifications, which use the task's own (positive) id.
+     */
+    fun idFor(file: String): Int = -1_000 - (file.hashCode() and 0xFFFF)
+
+    /** Posts or redraws one download's live notification outside the job, such as while it waits for Wi-Fi. */
+    fun show(context: Context, file: String, notification: Notification) =
+        context.getSystemService(NotificationManager::class.java).notify(idFor(file), notification)
+
+    /** Removes one download's live notification, and the one the first Models build used for all of them. */
+    fun clear(context: Context, file: String) {
+        val notifications = context.getSystemService(NotificationManager::class.java)
+        notifications.cancel(idFor(file))
+        notifications.cancel(PROGRESS_ID)
     }
 
     /** A download finished and the model can be chosen. */

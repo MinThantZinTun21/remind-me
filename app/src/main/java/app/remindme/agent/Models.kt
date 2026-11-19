@@ -1,27 +1,23 @@
 package app.remindme.agent
 
 import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.os.StatFs
 import android.util.Log
 import java.io.File
 
 /**
- * The model files on the phone: which one the agent uses, the ones downloading through Android's own
- * download service, and the ones copied over USB. See GLOSSARY.md.
+ * The model files on the phone: which one the agent uses, the ones downloading, and the ones copied over USB.
+ * See GLOSSARY.md.
  *
- * A download is written under a `.part` name and renamed to its `.litertlm` name only once complete, so a
- * half-finished file is never offered to the agent. The download service keeps going with the app closed,
- * waits while there is no Wi-Fi and carries on where it stopped. Its own notification is hidden: the app shows
- * a live one instead, from [ModelDownloadService].
+ * A download is a user-initiated job ([ModelDownloadJob]) that Android runs on Wi-Fi, starts again by itself
+ * after Wi-Fi comes back, and does not time out. It writes under a `.part` name and carries on where the file
+ * stops, and the file is renamed to its `.litertlm` name only once complete, so a half-finished file is never
+ * offered to the agent. The job keeps its progress here, where the Models screen reads it.
  */
 class Models(context: Context) {
     private val context = context.applicationContext
     private val prefs = this.context.getSharedPreferences("models", Context.MODE_PRIVATE)
-    private val downloads = this.context.getSystemService(DownloadManager::class.java)
 
     /** The app's own folder on shared storage: where downloads land and where a USB copy goes. */
     val folder: File? get() = context.getExternalFilesDir(null)
@@ -67,128 +63,113 @@ class Models(context: Context) {
     /** Free space where models go, in bytes. */
     fun freeBytes(): Long = folder?.let { runCatching { StatFs(it.path).availableBytes }.getOrNull() } ?: 0L
 
-    /** Hands [offer] to the download service, Wi-Fi only, and shows its progress in the notification bar. */
+    /** Starts downloading [offer] on Wi-Fi, with its progress in the notification bar. Call it from the screen. */
     fun download(offer: ModelOffer) {
         val folder = folder ?: return
-        // A part left behind by an earlier download the service no longer knows would block the new one.
+        // A part left behind by an earlier download that was given up would be taken for this one's start.
         File(folder, offer.file + PART).delete()
-        val request = DownloadManager.Request(Uri.parse(offer.url))
-            .setTitle(offer.name)
-            .setDescription("Model for Remind Me")
-            .setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI)
-            .setAllowedOverRoaming(false)
-            .setAllowedOverMetered(false)
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_HIDDEN)
-            .setDestinationInExternalFilesDir(context, null, offer.file + PART)
-        val id = downloads.enqueue(request)
-        prefs.edit().putLong(KEY + offer.file, id).putString(NAME + offer.file, offer.name).apply()
-        ModelDownloadService.start(context)
+        prefs.edit()
+            .putString(NAME + offer.file, offer.name)
+            .putString(STATE + offer.file, WAITING + "Waiting to start")
+            .putLong(DONE + offer.file, 0)
+            .putLong(TOTAL + offer.file, offer.bytes)
+            .putInt(FAILURES + offer.file, 0)
+            .commit()
+        ModelDownloadJob.schedule(context, offer)
     }
 
     /** The model's name as the owner saw it when downloading, or the file name. */
     fun nameOf(fileName: String): String = prefs.getString(NAME + fileName, null) ?: fileName
-
-    /** True while a download is fetching or waiting to carry on. */
-    fun downloading(): Boolean = progress().values.any { it is Progress.Running || it is Progress.Waiting }
 
     /** Where a download stands. */
     sealed interface Progress {
         data class Running(val done: Long, val total: Long) : Progress
         data class Waiting(val done: Long, val total: Long, val reason: String) : Progress
         data class Failed(val reason: String) : Progress
-        data object Finished : Progress
     }
 
-    /** Every download the app has started that is not yet renamed into place, by file name. */
+    /** Every download the app has started that has not finished, by file name. */
     fun progress(): Map<String, Progress> {
-        val tracked = trackedDownloads()
-        if (tracked.isEmpty()) return emptyMap()
-        val found = mutableMapOf<String, Progress>()
-        downloads.query(DownloadManager.Query().setFilterById(*tracked.values.toLongArray()))?.use { row ->
-            while (row.moveToNext()) {
-                val id = row.getLong(row.getColumnIndexOrThrow(DownloadManager.COLUMN_ID))
-                val name = tracked.entries.firstOrNull { it.value == id }?.key ?: continue
-                val done = row.getLong(row.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-                val total = row.getLong(row.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-                val reason = row.getInt(row.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
-                found[name] = when (row.getInt(row.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
-                    DownloadManager.STATUS_SUCCESSFUL -> Progress.Finished
-                    DownloadManager.STATUS_FAILED -> Progress.Failed(failure(reason))
-                    DownloadManager.STATUS_PAUSED -> Progress.Waiting(done, total, pause(reason))
-                    DownloadManager.STATUS_PENDING -> Progress.Waiting(done, total, "Waiting to start")
-                    else -> Progress.Running(done, total)
-                }
+        forgetOldDownloads()
+        return prefs.all.keys.filter { it.startsWith(STATE) }.associate { key ->
+            val file = key.removePrefix(STATE)
+            val state = prefs.getString(key, "").orEmpty()
+            val done = prefs.getLong(DONE + file, 0)
+            val total = prefs.getLong(TOTAL + file, 0)
+            file to when {
+                state == RUNNING -> Progress.Running(done, total)
+                state.startsWith(FAILED) -> Progress.Failed(state.removePrefix(FAILED))
+                else -> Progress.Waiting(done, total, state.removePrefix(WAITING))
             }
         }
-        // The service forgot a download (the owner cleared it from the Downloads app): stop tracking it.
-        for (name in tracked.keys - found.keys) {
-            Log.w(TAG, "The download service no longer knows the download of $name")
-            prefs.edit().remove(KEY + name).apply()
-        }
-        return found
-    }
-
-    /**
-     * Renames every completed download into place, so the agent can use it, and returns the files it renamed.
-     * Safe to call any time, from several places: a file is renamed, and returned, only once.
-     */
-    fun finishDownloads(): List<String> = synchronized(Models::class.java) { renameFinished() }
-
-    private fun renameFinished(): List<String> {
-        val folder = folder ?: return emptyList()
-        val renamed = mutableListOf<String>()
-        for ((name, state) in progress()) {
-            if (state != Progress.Finished) continue
-            val part = File(folder, name + PART)
-            val target = File(folder, name)
-            if (part.exists() && (target.exists() && target.delete() || !target.exists()) && part.renameTo(target)) {
-                prefs.edit()
-                    .remove(KEY + name)
-                    .putStringSet(DOWNLOADED, prefs.getStringSet(DOWNLOADED, emptySet()).orEmpty() + name)
-                    .apply()
-                renamed += name
-            }
-        }
-        return renamed
     }
 
     /** Stops a download and throws away what it had fetched. Logged, so a download that vanished can be explained. */
     fun cancel(fileName: String) {
         Log.i(TAG, "Download of $fileName cancelled by the owner")
-        trackedDownloads()[fileName]?.let { downloads.remove(it) }
-        prefs.edit().remove(KEY + fileName).apply()
+        ModelDownloadJob.cancel(context, fileName)
+        forget(fileName)
         folder?.let { File(it, fileName + PART).delete() }
     }
 
-    private fun trackedDownloads(): Map<String, Long> =
-        prefs.all.filterKeys { it.startsWith(KEY) }.mapNotNull { (key, value) -> (value as? Long)?.let { key.removePrefix(KEY) to it } }.toMap()
+    // What the download job reports. Kept here so the screen and the job read and write one record.
 
-    private fun pause(reason: Int) = when (reason) {
-        DownloadManager.PAUSED_QUEUED_FOR_WIFI, DownloadManager.PAUSED_WAITING_FOR_NETWORK -> "Waiting for Wi-Fi"
-        DownloadManager.PAUSED_WAITING_TO_RETRY -> "Connection dropped, trying again"
-        else -> "Paused"
+    internal fun running(fileName: String, done: Long, total: Long) {
+        prefs.edit().putString(STATE + fileName, RUNNING).putLong(DONE + fileName, done).putLong(TOTAL + fileName, total).apply()
     }
 
-    private fun failure(reason: Int) = when (reason) {
-        DownloadManager.ERROR_INSUFFICIENT_SPACE -> "Not enough free space"
-        DownloadManager.ERROR_HTTP_DATA_ERROR, DownloadManager.ERROR_TOO_MANY_REDIRECTS, DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> "Hugging Face did not send the file"
-        DownloadManager.ERROR_CANNOT_RESUME -> "Could not carry on where it stopped"
-        in 400..599 -> "Hugging Face answered $reason"
-        else -> "It stopped (reason $reason)"
+    internal fun waiting(fileName: String, reason: String) {
+        prefs.edit().putString(STATE + fileName, WAITING + reason).apply()
     }
 
-    /** The download service says a download ended: put a completed one into place, even with the app closed. */
-    class DownloadDone : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val pending = goAsync()
-            Thread {
-                try {
-                    val models = Models(context)
-                    for (file in models.finishDownloads()) DownloadNotices.ready(context, models.nameOf(file))
-                } finally {
-                    pending.finish()
-                }
-            }.start()
+    internal fun failed(fileName: String, reason: String) {
+        prefs.edit().putString(STATE + fileName, FAILED + reason).apply()
+    }
+
+    /** Counts an attempt that ended without getting any further; returns how many in a row. */
+    internal fun failedAttempt(fileName: String): Int {
+        val failures = prefs.getInt(FAILURES + fileName, 0) + 1
+        prefs.edit().putInt(FAILURES + fileName, failures).apply()
+        return failures
+    }
+
+    internal fun madeProgress(fileName: String) = prefs.edit().putInt(FAILURES + fileName, 0).apply()
+
+    /** False once the owner has cancelled: the job then stops and leaves nothing behind. */
+    internal fun isTracked(fileName: String): Boolean = prefs.contains(STATE + fileName)
+
+    /** The part file is complete: rename it into place, so the agent can use it. */
+    internal fun finish(fileName: String): Boolean {
+        val folder = folder ?: return false
+        val part = File(folder, fileName + PART)
+        val target = File(folder, fileName)
+        if (target.exists()) target.delete()
+        if (!part.renameTo(target)) return false
+        forget(fileName)
+        prefs.edit().putStringSet(DOWNLOADED, prefs.getStringSet(DOWNLOADED, emptySet()).orEmpty() + fileName).apply()
+        return true
+    }
+
+    internal fun partFile(fileName: String): File? = folder?.let { File(it, fileName + PART) }
+
+    private fun forget(fileName: String) {
+        prefs.edit()
+            .remove(STATE + fileName).remove(DONE + fileName).remove(TOTAL + fileName).remove(FAILURES + fileName)
+            .apply()
+    }
+
+    /**
+     * Downloads started through Android's download service by the first Models build: that service stalled on
+     * this phone, so they are stopped and their parts removed. The owner downloads again.
+     */
+    private fun forgetOldDownloads() {
+        val old = prefs.all.filter { it.key.startsWith(OLD_KEY) }
+        if (old.isEmpty()) return
+        val downloads = context.getSystemService(DownloadManager::class.java)
+        for ((key, id) in old) {
+            (id as? Long)?.let { runCatching { downloads.remove(it) } }
+            folder?.let { File(it, key.removePrefix(OLD_KEY) + PART).delete() }
+            prefs.edit().remove(key).apply()
         }
     }
 
@@ -196,8 +177,15 @@ class Models(context: Context) {
         private const val TAG = "Models"
         private const val IN_USE = "in_use"
         private const val DOWNLOADED = "downloaded"
-        private const val KEY = "download:"
+        private const val OLD_KEY = "download:"
         private const val NAME = "name:"
-        private const val PART = ".part"
+        private const val STATE = "state:"
+        private const val DONE = "done:"
+        private const val TOTAL = "total:"
+        private const val FAILURES = "failures:"
+        private const val RUNNING = "running"
+        private const val WAITING = "waiting:"
+        private const val FAILED = "failed:"
+        const val PART = ".part"
     }
 }

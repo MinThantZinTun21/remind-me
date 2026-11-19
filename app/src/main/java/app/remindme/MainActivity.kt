@@ -9,7 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import app.remindme.agent.ModelDownloadService
+import app.remindme.agent.Models
 import app.remindme.ui.RemindMeScreens
 
 class MainActivity : ComponentActivity() {
@@ -41,8 +41,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumes.intValue++
-        // A download may have outlived the live notification (the phone stopped it): show it again.
-        Thread { ModelDownloadService.resume(this) }.start()
+        // Reading the downloads stops any left in Android's download service by the first Models build.
+        Thread { Models(this).progress() }.start()
     }
 
     override fun onStart() {
