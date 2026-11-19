@@ -45,7 +45,7 @@ One announcement the phone makes for an occurrence: a lead-time warning, the not
 _Avoid_: Trigger, alert, ping
 
 **Snooze**:
-The user's request to be told about an occurrence again ten minutes later; it does not change the due time.
+The user's request to be told again about an occurrence that has already fired, ten minutes later or as long as the user says, never past a day or the next occurrence; it does not change the due time.
 _Avoid_: Postpone, delay, remind me later
 
 **History**:

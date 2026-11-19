@@ -43,3 +43,10 @@ Round 2, 2026-11-18. The owner accepted every recommendation.
 | `complete_task` | `id` |
 
 `style` is `alarm` or `notification`; the app keeps `alarm` only when the message says "alarm", "wake" or "wake me", or "don't let me miss", and keeps `notification` always. Whether `when` and `repeat` are words for every model family, and how calls are read back, is up to [Reading tool calls from each model family](11-reading-tool-calls-from-each-model-family.md).
+
+Round 3, 2026-11-19, with the agent build 2 spec. The owner accepted every recommendation.
+
+10. **Two more tools.** `snooze_task(id, for)` and `show_tasks(when)`. `undo_last` and `find_tasks` are left out.
+11. **`snooze_task` acts only on an occurrence that has already fired and is not done.** For one not yet due, the card says "Gym isn't due yet. To move it, say when" and nothing changes.
+12. **`for` is in the user's words**, read like `when` ("for an hour", "until 5", "30 minutes"). Without it, 10 minutes. Never past 24 hours or the next occurrence of a repeating task: the card refuses and suggests moving the task.
+13. **`show_tasks(when)`** reads "today", "tomorrow", a weekday, "this week", "next week", "next N days", "overdue" or "all"; other words are an unusable call and get the one second attempt. The card lists up to 10 tasks (title, due, repeat), each opening the task, then "and N more, open the list"; it has no Undo. The model is told "showed 4 tasks for tomorrow: ids 3, 7, 9, 12", and those tasks count as touched in this conversation.

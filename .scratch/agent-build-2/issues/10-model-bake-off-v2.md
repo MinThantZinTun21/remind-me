@@ -17,3 +17,5 @@ Run the shortlisted models from [Mobile models that make tool calls](01-mobile-m
 - Context used.
 
 The owner picks the default model, and decides whether the second engine goes into the build. The 30-second limit applies.
+
+**Added 2026-11-19.** The first download in the bake-off is also the phone check of the user-initiated download job (commit 950813d), which the owner skipped testing on its own: the live notification and its status bar icon, a Wi-Fi drop and the resume from the part file, and the ready notice.
