@@ -76,6 +76,14 @@ _Avoid_: Chat, session, history (history is done tasks)
 A function the app offers the agent for acting on tasks; the agent's only way to change anything.
 _Avoid_: Function, command, API
 
+**Context**:
+Everything the model reads for one message: the instruction, the tools, the tasks shown, the conversation so far and the new message; it has a fixed size, so the oldest parts are left out first.
+_Avoid_: Prompt (the instruction is one part of the context), memory, window
+
+**Orchestrator**:
+The part of the app that runs one message from start to finish: it builds the context, asks the model once (twice when the first reply is unusable), carries out the tool calls and adds the outcome to the conversation. It is app code, not a second model.
+_Avoid_: Multi-agent, planner, router
+
 **Action card**:
 The app's account of what the agent just did to a task, from which the user can undo or edit it.
 _Avoid_: Draft, preview, confirmation
