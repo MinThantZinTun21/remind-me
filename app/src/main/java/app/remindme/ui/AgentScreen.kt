@@ -2,6 +2,7 @@ package app.remindme.ui
 
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -35,8 +36,8 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,9 +67,14 @@ import app.remindme.RemindMeApp
 import app.remindme.agent.ActionCard
 import app.remindme.agent.AgentEngine
 import app.remindme.agent.ReplyParser
+import app.remindme.core.DayRow
 import app.remindme.core.DeliveryStyle
 import app.remindme.core.Task
+import app.remindme.core.ToolResult
+import app.remindme.core.dayRow
 import app.remindme.wording.Times
+import app.remindme.wording.short
+import java.time.DayOfWeek
 import app.remindme.wording.inWords
 import app.remindme.wording.label
 import app.remindme.wording.leadTimesInWords
@@ -83,11 +89,21 @@ internal val EXAMPLES = listOf(
 /** One message the user sent and what came of it. */
 private class Exchange(val text: String) {
     var writing by mutableStateOf("")
-    var cards by mutableStateOf<List<ActionCard>>(emptyList())
-    var undone by mutableStateOf<Set<Int>>(emptySet())
+    var cards by mutableStateOf<List<CardState>>(emptyList())
     var problem by mutableStateOf<String?>(null)
     var timing by mutableStateOf<String?>(null)
     var finished by mutableStateOf(false)
+}
+
+/**
+ * An action card as it stands on screen: the task as the day buttons have left it, and each day change,
+ * newest last, as the task was before it, so Undo can take them back one at a time.
+ */
+private class CardState(val card: ActionCard) {
+    var task by mutableStateOf(card.task)
+    val dayChanges = mutableStateListOf<Task>()
+    var undone by mutableStateOf(false)
+    var note by mutableStateOf<String?>(null)
 }
 
 private enum class ModelState { MISSING, LOADING, READY, WORKING, FAILED }
@@ -98,7 +114,7 @@ private enum class ModelState { MISSING, LOADING, READY, WORKING, FAILED }
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit, onClose: () -> Unit) {
+fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit, onModels: () -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val main = remember { Handler(Looper.getMainLooper()) }
     val modelFile = remember { AgentEngine.modelFile(context) }
@@ -146,7 +162,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                 override fun onDone(reply: AgentEngine.Reply) {
                     main.post {
                         val parsed = ReplyParser.parse(reply.text)
-                        exchange.cards = app.agent.act(parsed.calls)
+                        exchange.cards = app.agent.act(parsed.calls).map(::CardState)
                         // The agent answers with tool calls only; anything else it writes is not shown.
                         exchange.problem = parsed.problem
                             ?: "The agent found nothing to remind you of in that. Say what it is and when.".takeIf { parsed.calls.isEmpty() }
@@ -187,7 +203,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                         Text("Tell Remind Me")
                         Text(
                             when (state) {
-                                ModelState.MISSING -> "No model on this phone"
+                                ModelState.MISSING -> "No model chosen"
                                 ModelState.LOADING -> "Getting ready. You can already send."
                                 ModelState.READY -> "Ready"
                                 ModelState.WORKING -> "Working…"
@@ -212,11 +228,16 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                 if (exchanges.isEmpty()) {
                     item {
                         if (state == ModelState.MISSING) {
-                            Text(
-                                "There is no model on this phone yet. Copy a .litertlm model file into " +
-                                    "${AgentEngine.modelFolder(context)?.path} and open this screen again.",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
+                            Column {
+                                Text("No model, choose one", style = MaterialTheme.typography.headlineSmall)
+                                Text(
+                                    "The agent needs a model on this phone. Download one, or choose one you already have, on the Models screen.",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+                                )
+                                OutlinedButton(onClick = onModels) { Text("Open Models") }
+                            }
                         } else {
                             Opening(onTry = { typed = it })
                         }
@@ -225,11 +246,28 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                 items(exchanges) { exchange ->
                     ExchangeView(
                         exchange,
-                        onUndo = { index ->
-                            app.agent.undo(exchange.cards[index])
-                            exchange.undone = exchange.undone + index
+                        onChange = { card, change ->
+                            val result = when (change) {
+                                CardChange.Undo -> {
+                                    val before = card.dayChanges.lastOrNull()
+                                    if (before == null) {
+                                        app.agent.undo(card.card)
+                                        card.undone = true
+                                        null
+                                    } else {
+                                        app.dayButtons.undo(before).also { if (it is ToolResult.Ok) card.dayChanges.removeAt(card.dayChanges.lastIndex) }
+                                    }
+                                }
+                                is CardChange.Day -> card.task?.let { task -> app.dayButtons.tap(task, change.day).also { if (it is ToolResult.Ok) card.dayChanges += task } }
+                                CardChange.RepeatWeekly -> card.task?.let { task -> app.dayButtons.repeatWeekly(task).also { if (it is ToolResult.Ok) card.dayChanges += task } }
+                            }
+                            when (result) {
+                                is ToolResult.Ok -> { card.task = result.task; card.note = null }
+                                is ToolResult.Refused -> card.note = result.reason
+                                null -> card.note = null
+                            }
                             // The task list changed: the waiting model has to read it again.
-                            if (state == ModelState.READY || state == ModelState.LOADING) load()
+                            if (result !is ToolResult.Refused && (state == ModelState.READY || state == ModelState.LOADING)) load()
                         },
                         onEditTask = onEditTask,
                     )
@@ -285,13 +323,34 @@ private fun Opening(onTry: (String) -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
         )
-        for (example in EXAMPLES) SuggestionChip(onClick = { onTry(example) }, label = { Text(example) })
+        Examples(onPick = onTry)
+    }
+}
+
+/** The sentences to try, one under the other. A long one wraps onto a second line. */
+@Composable
+internal fun Examples(onPick: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (example in EXAMPLES) {
+            Surface(
+                onClick = { onPick(example) },
+                shape = RoundedCornerShape(12.dp),
+                color = Color.Transparent,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            ) {
+                Text(
+                    example,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun ExchangeView(exchange: Exchange, onUndo: (Int) -> Unit, onEditTask: (Long) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun ExchangeView(exchange: Exchange, onChange: (CardState, CardChange) -> Unit, onEditTask: (Long) -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // What the user said, on the right, as in a conversation.
         Surface(
             color = MaterialTheme.colorScheme.primaryContainer,
@@ -317,8 +376,8 @@ private fun ExchangeView(exchange: Exchange, onUndo: (Int) -> Unit, onEditTask: 
             }
             return@Column
         }
-        exchange.cards.forEachIndexed { index, card ->
-            ActionCardView(card, undone = index in exchange.undone, onUndo = { onUndo(index) }, onEditTask = onEditTask)
+        for (card in exchange.cards) {
+            ActionCardView(card, onChange = { onChange(card, it) }, onEditTask = onEditTask)
         }
         exchange.problem?.let { Problem(it) }
         exchange.timing?.let {
@@ -327,12 +386,22 @@ private fun ExchangeView(exchange: Exchange, onUndo: (Int) -> Unit, onEditTask: 
     }
 }
 
+/** What the user can do to an action card besides Edit. */
+private sealed interface CardChange {
+    /** Takes back the newest day change, or what the agent did when there is none. */
+    data object Undo : CardChange
+    data class Day(val day: DayOfWeek) : CardChange
+    data object RepeatWeekly : CardChange
+}
+
 /** One thing the agent did, with every property it decided, so the user can check each one. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ActionCardView(card: ActionCard, undone: Boolean, onUndo: () -> Unit, onEditTask: (Long) -> Unit) {
+private fun ActionCardView(state: CardState, onChange: (CardChange) -> Unit, onEditTask: (Long) -> Unit) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
+    val card = state.card
+    val undone = state.undone
     val accent = if (card.went) colors.primary else colors.error
     Card(
         colors = CardDefaults.cardColors(containerColor = if (card.went) colors.surfaceContainerHigh else colors.errorContainer),
@@ -344,7 +413,7 @@ private fun ActionCardView(card: ActionCard, undone: Boolean, onUndo: () -> Unit
                 Icon(card.icon(), contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
                 Text(card.heading(undone), style = MaterialTheme.typography.labelLarge, color = accent, modifier = Modifier.padding(start = 8.dp))
             }
-            card.task?.let { task ->
+            state.task?.let { task ->
                 Text(task.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 10.dp))
                 Text(Times.dateAndTime(context, task.due), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 2.dp))
                 FlowRow(
@@ -354,17 +423,48 @@ private fun ActionCardView(card: ActionCard, undone: Boolean, onUndo: () -> Unit
                 ) {
                     for (fact in task.facts()) Fact(fact)
                 }
+                if (card.went && !undone && card.action in EDITABLE) DayControls(task, onChange)
             }
             card.refusal?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onErrorContainer, modifier = Modifier.padding(top = 8.dp))
             }
+            state.note?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.error, modifier = Modifier.padding(top = 8.dp))
+            }
             if (card.went && !undone) {
                 Row(Modifier.align(Alignment.End).padding(top = 4.dp)) {
-                    TextButton(onClick = onUndo) { Text("Undo") }
-                    val task = card.task
+                    TextButton(onClick = { onChange(CardChange.Undo) }) { Text(if (state.dayChanges.isEmpty()) "Undo" else "Undo day change") }
+                    val task = state.task
                     if (task != null && card.action in EDITABLE) TextButton(onClick = { onEditTask(task.id) }) { Text("Edit") }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The day buttons under a task the agent set or changed: its days, for a task that repeats on weekdays or
+ * every day; the day it falls on, for a one-time task, with a way to make it weekly.
+ */
+@Composable
+private fun DayControls(task: Task, onChange: (CardChange) -> Unit) {
+    val row = task.dayRow() ?: return
+    val label = when (row) {
+        is DayRow.RepeatsOn -> "Repeats on"
+        is DayRow.MoveTo -> "Move to"
+    }
+    Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 14.dp))
+    DayButtonRow(
+        selected = when (row) {
+            is DayRow.RepeatsOn -> row.days
+            is DayRow.MoveTo -> setOf(row.day)
+        },
+        onTap = { onChange(CardChange.Day(it)) },
+        modifier = Modifier.padding(top = 6.dp),
+    )
+    if (row is DayRow.MoveTo) {
+        OutlinedButton(onClick = { onChange(CardChange.RepeatWeekly) }, modifier = Modifier.padding(top = 8.dp)) {
+            Text("Repeat every ${row.day.short()}")
         }
     }
 }

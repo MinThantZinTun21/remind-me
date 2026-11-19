@@ -109,6 +109,14 @@ class AgentTest {
             RepeatRule.weekdays(setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY)),
             rule("repeat" to "weekly", "repeat_days" to "mon, wed,Friday"),
         )
+        assertEquals(
+            RepeatRule.weekdays(setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)),
+            rule("repeat" to "weekdays"),
+        )
+        assertEquals(
+            RepeatRule.weekdays(setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)),
+            rule("repeat" to "weekdays", "repeat_days" to "mon,fri"),
+        )
         assertEquals(RepeatRule.monthly(), rule("repeat" to "monthly"))
         assertEquals(RepeatRule.yearly(until = LocalDate.parse("2030-01-01")), rule("repeat" to "yearly", "repeat_until" to "2030-01-01"))
         assertEquals(RepeatRule.ONCE, rule("repeat" to "none"))
@@ -178,6 +186,30 @@ class AgentTest {
     }
 
     @Test
+    fun `an update that would leave the task as it was is refused, so the card does not say Changed`() {
+        val before = (world.tools.create(TaskDetails("Call mom", at("2026-11-18T09:00"))) as ToolResult.Ok).task
+
+        val card = act("update_task", "id" to before.id.toString(), "due" to "2026-11-18 09:00")
+
+        assertFalse(card.went)
+        assertEquals("The agent's change left \"Call mom\" exactly as it was.", card.refusal)
+        assertEquals(listOf(before), world.tools.list())
+    }
+
+    @Test
+    fun `a daily task can be moved a day after an earlier change to it was undone`() {
+        val created = act("create_task", "title" to "Call mom", "due" to "2026-11-18T09:00", "repeat" to "daily").task!!
+        val id = "id" to created.id.toString()
+
+        agent.undo(act("update_task", id, "due" to "2026-11-18T09:00", "warn_before" to "0", "style" to "alarm"))
+        assertEquals(listOf(created), world.tools.list())
+
+        val moved = act("update_task", id, "due" to "2026-11-19T09:00", "repeat_days" to "fri")
+        assertTrue(moved.refusal, moved.went)
+        assertEquals(at("2026-11-19T09:00"), world.tools.list().single().due)
+    }
+
+    @Test
     fun `delete_task and complete_task act on the task with that id, and an unknown id is refused`() {
         val first = (world.tools.create(TaskDetails("First", at("2026-11-18T09:00"))) as ToolResult.Ok).task
         val second = (world.tools.create(TaskDetails("Second", at("2026-11-18T10:00"))) as ToolResult.Ok).task
@@ -241,6 +273,12 @@ class AgentTest {
         assertTrue(told, "Wed 2026-11-18 (tomorrow), Thu 2026-11-19" in told)
         assertTrue(told, "Tue 2026-12-01" in told)
         assertTrue(told, "- id ${task.id}: Call mom | due Wed 2026-11-18 09:00 | daily | alarm | warns 15 min before" in told)
+    }
+
+    @Test
+    fun `the agent has one word for a working-week repeat, so it need not list the five days`() {
+        assertTrue("every weekday, every working day or Monday to Friday is weekdays" in agent.systemInstruction())
+        assertTrue("\"weekdays\"" in Agent.TOOLS_JSON)
     }
 
     @Test

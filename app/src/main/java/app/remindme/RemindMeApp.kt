@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.compose.runtime.mutableIntStateOf
 import app.remindme.agent.Agent
 import app.remindme.core.Clock
+import app.remindme.core.DayButtons
 import app.remindme.core.Fires
 import app.remindme.core.Tools
 import app.remindme.data.RemindMeDatabase
@@ -24,6 +25,8 @@ class RemindMeApp : Application() {
         private set
     lateinit var agent: Agent
         private set
+    lateinit var dayButtons: DayButtons
+        private set
     lateinit var fires: Fires
         private set
     lateinit var fireLog: RoomFireLog
@@ -39,6 +42,7 @@ class RemindMeApp : Application() {
         fires = Fires(store, AlarmFireScheduler(this), announcer, fireLog, PhoneClock)
         tools = Tools(store, fires, announcer, PhoneClock)
         agent = Agent(tools, PhoneClock)
+        dayButtons = DayButtons(tools, PhoneClock)
     }
 
     companion object {

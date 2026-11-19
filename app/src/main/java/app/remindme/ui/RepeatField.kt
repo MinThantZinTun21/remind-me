@@ -3,14 +3,12 @@ package app.remindme.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -109,7 +107,6 @@ data class RepeatEntry(
  * How a task repeats: the cycle, the extra the cycle needs, and an optional last day.
  * [countedFrom] is the date its days are worked out from.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RepeatField(entry: RepeatEntry, countedFrom: LocalDate, onChange: (RepeatEntry) -> Unit, onPickEndDate: () -> Unit) {
     var choosing by remember { mutableStateOf(false) }
@@ -136,16 +133,12 @@ fun RepeatField(entry: RepeatEntry, countedFrom: LocalDate, onChange: (RepeatEnt
             }
         }
         if (entry.choice == RepeatChoice.WEEKDAYS) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (day in DayOfWeek.entries) {
-                    val selected = day in entry.weekdays
-                    FilterChip(
-                        selected = selected,
-                        onClick = { onChange(entry.copy(weekdays = if (selected) entry.weekdays - day else entry.weekdays + day)) },
-                        label = { Text(day.short()) },
-                    )
-                }
-            }
+            // The same buttons as on the agent's action card.
+            DayButtonRow(
+                selected = entry.weekdays,
+                onTap = { day -> onChange(entry.copy(weekdays = if (day in entry.weekdays) entry.weekdays - day else entry.weekdays + day)) },
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
         }
         entry.choice.countLabel?.let { countLabel ->
             OutlinedTextField(

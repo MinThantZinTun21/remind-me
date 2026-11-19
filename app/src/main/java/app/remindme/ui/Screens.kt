@@ -35,6 +35,7 @@ sealed interface Screen {
     data object History : Screen
     data object SetUp : Screen
     data object FireLog : Screen
+    data object Models : Screen
 }
 
 /** The way back to the task list, the same on every screen. */
@@ -68,10 +69,11 @@ fun MenuScreen(title: String, onBack: (() -> Unit)?, content: @Composable (Paddi
 
 /**
  * [taskToOpen] is set when the user taps a notification; the screens show that task and clear it.
+ * [modelsToOpen] is set when the user taps a download notification; the screens show Models and clear it.
  * [resumes] changes each time the user comes back to the app.
  */
 @Composable
-fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>, resumes: IntState) {
+fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>, modelsToOpen: MutableState<Boolean>, resumes: IntState) {
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     val setUp = remember { SetUp(app) }
     var setUpFinished by remember { mutableStateOf(setUp.finished) }
@@ -79,6 +81,11 @@ fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>, resumes: 
     LaunchedEffect(taskToOpen.value) {
         taskToOpen.value?.let { screen = Screen.EditTask(it) }
         taskToOpen.value = null
+    }
+
+    LaunchedEffect(modelsToOpen.value) {
+        if (modelsToOpen.value) screen = Screen.Models
+        modelsToOpen.value = false
     }
 
     RemindMeTheme {
@@ -98,13 +105,21 @@ fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>, resumes: 
                 onHistory = { screen = Screen.History },
                 onSetUp = { screen = Screen.SetUp },
                 onFireLog = { screen = Screen.FireLog },
+                onModels = { screen = Screen.Models },
             )
             Screen.NewTask -> TaskFormScreen(app, taskId = null, onClose = { screen = Screen.Home })
-            is Screen.Agent -> AgentScreen(app, draft = current.draft, onEditTask = { screen = Screen.EditTask(it) }, onClose = { screen = Screen.Home })
+            is Screen.Agent -> AgentScreen(
+                app,
+                draft = current.draft,
+                onEditTask = { screen = Screen.EditTask(it) },
+                onModels = { screen = Screen.Models },
+                onClose = { screen = Screen.Home },
+            )
             is Screen.EditTask -> TaskFormScreen(app, taskId = current.taskId, onClose = { screen = Screen.Home })
             Screen.History -> HistoryScreen(app, onClose = { screen = Screen.Home })
             Screen.SetUp -> SetUpScreen(setUp, resumes.intValue, firstRun = false, onClose = { screen = Screen.Home })
             Screen.FireLog -> FireLogScreen(app, onClose = { screen = Screen.Home })
+            Screen.Models -> ModelsScreen(onClose = { screen = Screen.Home })
         }
     }
 }

@@ -33,7 +33,6 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -81,6 +80,7 @@ fun HomeScreen(
     onHistory: () -> Unit,
     onSetUp: () -> Unit,
     onFireLog: () -> Unit,
+    onModels: () -> Unit,
 ) {
     val context = LocalContext.current
     val tasks = remember(app.revision.intValue) { app.tools.list() }
@@ -113,6 +113,7 @@ fun HomeScreen(
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Menu") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(text = { Text("History") }, onClick = { menuOpen = false; onHistory() })
+                        DropdownMenuItem(text = { Text("Models") }, onClick = { menuOpen = false; onModels() })
                         DropdownMenuItem(text = { Text("Set-up") }, onClick = { menuOpen = false; onSetUp() })
                         DropdownMenuItem(text = { Text("Fire log") }, onClick = { menuOpen = false; onFireLog() })
                     }
@@ -242,7 +243,7 @@ private fun NothingYet(onAgent: (String) -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
         )
-        for (example in EXAMPLES) SuggestionChip(onClick = { onAgent(example) }, label = { Text(example) })
+        Examples(onPick = onAgent)
     }
 }
 

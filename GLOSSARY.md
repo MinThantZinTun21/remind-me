@@ -61,8 +61,16 @@ A full-screen ring that continues until the user answers it or ten minutes pass,
 _Avoid_: Loud notification, alert
 
 **Agent**:
-The on-phone model that reads the user's typed text and decides every property of a task: due time, repeat rule, lead time and delivery style.
+The on-phone model that reads the user's typed text, decides what to do and to which task, and passes on the user's own words for when, how often and how early; the app turns those words into the task's properties.
 _Avoid_: Assistant, chatbot, parser, AI
+
+**Model**:
+A downloadable file the agent runs on, chosen by the user from those that make tool calls; one is in use at a time.
+_Avoid_: LLM, AI, brain, engine (the engine is what runs a model)
+
+**Conversation**:
+The messages the user and the agent exchange while the agent screen is open; the agent remembers it until the user leaves the screen.
+_Avoid_: Chat, session, history (history is done tasks)
 
 **Tool**:
 A function the app offers the agent for acting on tasks; the agent's only way to change anything.

@@ -116,16 +116,17 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         val due = args["due"]?.let { dueTime(it) ?: throw Unreadable("The app cannot read the due time \"$it\".") }
         val newRule = repeat(args)
         val until = args["repeat_until"]?.let(::day)
-        return tools.update(
-            before.id,
-            TaskDetails(
-                title = args["title"]?.takeIf { it.isNotBlank() } ?: before.title,
-                due = due ?: before.due,
-                style = style(args["style"]) ?: before.style,
-                leadTimes = leadTimes(args["warn_before"]) ?: before.leadTimes,
-                repeat = newRule ?: if (until != null) before.repeat.copy(until = until) else before.repeat,
-            ),
+        val asItWas = TaskDetails(before.title, before.due, before.style, before.leadTimes, before.repeat)
+        val wanted = asItWas.copy(
+            title = args["title"]?.takeIf { it.isNotBlank() } ?: before.title,
+            due = due ?: before.due,
+            style = style(args["style"]) ?: before.style,
+            leadTimes = leadTimes(args["warn_before"]) ?: before.leadTimes,
+            repeat = newRule ?: if (until != null) before.repeat.copy(until = until) else before.repeat,
         )
+        // The agent sometimes names the right task and then writes back what it already had.
+        if (wanted == asItWas) throw Unreadable("The agent's change left \"${before.title}\" exactly as it was.")
+        return tools.update(before.id, wanted)
     }
 
     private fun onExisting(call: ToolCall, action: ActionCard.Action, change: (Task) -> ToolResult): ActionCard {
@@ -183,7 +184,8 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         return when (kind) {
             "none", "once", "no" -> RepeatRule.ONCE
             "daily" -> RepeatRule.everyDays(every, until)
-            "weekdays" -> RepeatRule.weekdays(days.ifEmpty { WORKING_WEEK }, until)
+            // The working week is always Monday to Friday, whatever days the agent writes beside it.
+            "weekdays" -> RepeatRule.weekdays(WORKING_WEEK, until)
             "weekly" -> when {
                 days.isEmpty() -> RepeatRule.everyWeeks(every, until)
                 every == 1 -> RepeatRule.weekdays(days, until)
@@ -239,7 +241,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         private const val TASK_PROPERTIES = """
           "title": {"type": "string", "description": "What to do, in a few words."},
           "due": {"type": "string", "description": "When it happens, as YYYY-MM-DDTHH:MM in 24-hour time."},
-          "repeat": {"type": "string", "enum": ["none", "daily", "weekly", "monthly", "yearly"]},
+          "repeat": {"type": "string", "enum": ["none", "daily", "weekdays", "weekly", "monthly", "yearly"]},
           "repeat_every": {"type": "integer", "description": "Every how many days or weeks. Leave out for 1."},
           "repeat_days": {"type": "string", "description": "With weekly, the weekdays it falls on, like mon,wed,fri."},
           "repeat_until": {"type": "string", "description": "The last day it repeats, as YYYY-MM-DD."},
@@ -281,7 +283,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         - One create_task for each thing to be reminded of. Write every call the message needs in this one reply.
         - title is the thing itself in a few words, starting with a capital letter, without "remind me to".
         - due is the moment the thing happens. Take the date from Today and Coming days; never count days yourself. "in 20 minutes" or "in 2 hours" is added to the time now. A time with no day is the next time the clock shows it. A day with no time: you choose (morning 09:00, noon 12:00, afternoon 15:00, evening 19:00, night 21:00). No day and no time: one hour from now.
-        - repeat only when the thing comes round again: every day, morning or night is daily; every Monday is weekly with repeat_days mon; on weekdays is weekly with repeat_days mon,tue,wed,thu,fri; each month is monthly; birthdays are yearly. due is then the first time it happens.
+        - repeat only when the thing comes round again: every day, morning or night is daily; every weekday, every working day or Monday to Friday is weekdays; every Monday is weekly with repeat_days mon; Tuesdays and Thursdays is weekly with repeat_days tue,thu; each month is monthly; birthdays are yearly. due is then the first time it happens.
         - warn_before is how long before due the user gets an early warning. Use what the user says ("30 minutes before" is 30). If they do not say, you choose: 0 for waking up and for small things done on the spot, 10 to 60 for things to travel to or get ready for, 1440 for birthdays and deadlines.
         - style is alarm when the user says alarm, wake up, or that they must not miss it. Otherwise leave it out.
         - To change, move, cancel or finish something that is already in Tasks, call update_task, delete_task or complete_task with its id. Do not create it again.

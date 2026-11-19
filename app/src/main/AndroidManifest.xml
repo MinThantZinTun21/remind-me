@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Set-up asks the user, through Android's own dialog, to lift battery restrictions for this app. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Only to list and download models from Hugging Face. Tasks never leave the phone. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- A model download shows the app's own live notification instead of the download service's. -->
+    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".RemindMeApp"
@@ -71,6 +76,20 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <!-- Keeps the model download notification live, once a second, while a download runs. -->
+        <service
+            android:name=".agent.ModelDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Android's download service says a model download ended; a completed one is put into place. -->
+        <receiver
+            android:name=".agent.Models$DownloadDone"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
             </intent-filter>
         </receiver>
     </application>

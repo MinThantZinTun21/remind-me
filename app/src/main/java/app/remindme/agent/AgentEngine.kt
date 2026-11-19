@@ -21,7 +21,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * The model on the phone: LFM3-1.7B run by LiteRT-LM on the CPU, fully offline.
+ * The model on the phone, chosen on the Models screen (LFM3-1.7B unless the owner picks another), run by
+ * LiteRT-LM on the CPU, fully offline.
  *
  * The model is loaded when the user opens the agent screen and dropped when they leave it; it never runs
  * in the background or when a task fires. It reads the system instruction as soon as it is loaded, which
@@ -139,7 +140,7 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) {
                     val tokens = runCatching { talking.getTokenCount() }.getOrDefault(-1)
                     val first = if (firstAt == 0L) finished - started else firstAt - started
                     Log.i(TAG, "reply in ${finished - started} ms, first token after $first ms, $tokens tokens in context")
-                    Log.d(TAG, "reply: $reply")
+                    Log.i(TAG, "reply: $reply")
                     listener.onDone(Reply(reply.toString(), first, finished - started, tokens))
                 }
             } catch (failure: Throwable) {
@@ -177,9 +178,8 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) {
         private val GREEDY = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 0)
         private val NO_THINKING = ThinkingConfig(enableThinking = false)
 
-        /** The model file the owner copied to the phone during set-up, or null when there is none yet. */
-        fun modelFile(context: Context): File? =
-            modelFolder(context)?.listFiles { file -> file.isFile && file.name.endsWith(".litertlm") }?.maxByOrNull { it.lastModified() }
+        /** The model file chosen on the Models screen, or null when there is none to use. */
+        fun modelFile(context: Context): File? = Models(context).inUse()
 
         /** Where the model file goes: the app's own folder on shared storage, which a USB copy can reach. */
         fun modelFolder(context: Context): File? = context.getExternalFilesDir(null)
