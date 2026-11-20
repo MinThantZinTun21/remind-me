@@ -111,6 +111,8 @@ private class ExchangeState(val text: String) {
  */
 private class CardState(val card: ActionCard) {
     var task by mutableStateOf(card.task)
+    /** For a list card, the tasks as they now are. */
+    var listed by mutableStateOf(card.listed)
     val dayChanges = mutableStateListOf<Task>()
     var undone by mutableStateOf(false)
     var note by mutableStateOf<String?>(null)
@@ -196,8 +198,9 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onModels: () -> Unit, onCl
             worker.shutdown()
         }
     }
-    LaunchedEffect(exchanges.size, exchanges.lastOrNull()?.finished) {
-        if (exchanges.isNotEmpty()) list.animateScrollToItem(exchanges.size - 1)
+    LaunchedEffect(exchanges.size, exchanges.lastOrNull()?.finished, editing) {
+        // The list is not drawn while a task is open over it; it scrolls once the screen is back.
+        if (editing == null && exchanges.isNotEmpty()) list.animateScrollToItem(exchanges.size - 1)
     }
 
     editing?.let { taskId ->
@@ -205,7 +208,10 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onModels: () -> Unit, onCl
             editing = null
             // The cards show the task as it now is, and the model reads the changed list again.
             val now = app.tools.list().firstOrNull { it.id == taskId }
-            for (card in exchanges.flatMap { it.cards }) if (card.task?.id == taskId && now != null) card.task = now
+            for (card in exchanges.flatMap { it.cards }) {
+                if (card.task?.id == taskId && now != null) card.task = now
+                if (card.listed.any { it.id == taskId }) card.listed = card.listed.mapNotNull { if (it.id == taskId) now else it }
+            }
             if (state == ModelState.READY || state == ModelState.LOADING) load()
         }
         BackHandler { back() }
@@ -402,7 +408,7 @@ private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChan
             return@Column
         }
         for (card in exchange.cards) {
-            if (card.card.lists) ListCard(card.card, onEditTask, onOpenList)
+            if (card.card.lists) ListCard(card, onEditTask, onOpenList)
             else ActionCardView(card, onChange = { onChange(card, it) }, onEditTask = onEditTask)
         }
         exchange.problem?.let { Problem(it) }
@@ -476,12 +482,13 @@ private fun ActionCardView(state: CardState, onChange: (CardChange) -> Unit, onE
 
 /** The tasks a show_tasks call lists: each opens to edit, and a long list ends with a way to the whole list. */
 @Composable
-private fun ListCard(card: ActionCard, onEditTask: (Long) -> Unit, onOpenList: () -> Unit) {
+private fun ListCard(state: CardState, onEditTask: (Long) -> Unit, onOpenList: () -> Unit) {
+    val card = state.card
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val all = card.range?.all == true
     val range = if (all) "All tasks" else card.range?.label.orEmpty()
-    val count = card.listed.size
+    val count = state.listed.size
     Card(
         colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh),
         shape = RoundedCornerShape(20.dp),
@@ -501,7 +508,7 @@ private fun ListCard(card: ActionCard, onEditTask: (Long) -> Unit, onOpenList: (
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
-            for (task in card.listed.take(LISTED_ROWS)) {
+            for (task in state.listed.take(LISTED_ROWS)) {
                 Column(
                     Modifier
                         .fillMaxWidth()

@@ -182,11 +182,10 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
     companion object {
         private const val TAG = "RemindMeAgent"
 
-        /** Room for about three tool calls and a sentence. */
         private const val REPLY_TIMEOUT_S = 240L
         private const val STOP_TIMEOUT_S = 10L
 
-        /** The context of a model file whose name does not say. */
+        /** The context of a model file that neither its name nor its offer gives a size for. */
         private const val DEFAULT_CONTEXT = 2048
 
         /** The same text on the same phone gives the same calls. */

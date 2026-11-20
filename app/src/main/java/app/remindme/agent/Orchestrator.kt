@@ -12,7 +12,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 data class Preface(val system: String, val tools: String)
 
-/** What the model may write, kept free in its context; the engine's output limit. */
+/** What the model may write, kept free in its context; the engine's output limit. Room for about three tool calls and a sentence. */
 const val MAX_OUTPUT_TOKENS = 320
 
 /** One reply from the model, and what the runtime counted while writing it. */

@@ -177,7 +177,6 @@ object WordReader {
         /** Every task, whenever it is due. */
         val all: Boolean get() = from == null && to == null
 
-        fun holds(due: LocalDateTime): Boolean = (from == null || due >= from) && (to == null || due < to)
     }
 
     /**
