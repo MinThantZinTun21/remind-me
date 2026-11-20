@@ -147,11 +147,15 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     /** Has the model read the next message's preface while the user types. */
     fun prepare() = model.prepare(preface())
 
-    /** Sends the user's [words] and returns what came of them. Blocks until the model has replied. */
-    fun send(words: String, onText: (String) -> Unit = {}): Exchange {
+    /**
+     * Sends the user's [words] and returns what came of them. Blocks until the model has replied. [onInput]
+     * gets the context the model is about to read, before it is asked; [onText] the reply so far.
+     */
+    fun send(words: String, onInput: (ContextRecord) -> Unit = {}, onText: (String) -> Unit = {}): Exchange {
         val message = agent.userMessage(words)
         val fit = fit(message)
         val parts = fit.parts + part("Message", message)
+        onInput(record(parts, null, fit.leftOut))
         val exchange = try {
             model.open(prefaceOf(fit.parts)).use { talk ->
                 val first = attempt(talk, message, words, fit.shown, onText)

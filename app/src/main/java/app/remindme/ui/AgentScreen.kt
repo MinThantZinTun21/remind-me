@@ -102,6 +102,8 @@ private class ExchangeState(val text: String) {
     var problem by mutableStateOf<String?>(null)
     var timing by mutableStateOf<String?>(null)
     var context by mutableStateOf<ContextRecord?>(null)
+    /** What the model is reading for this message, known before it replies. */
+    var input by mutableStateOf<ContextRecord?>(null)
     var finished by mutableStateOf(false)
 }
 
@@ -173,7 +175,11 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onModels: () -> Unit, onCl
         state = ModelState.WORKING
         worker.execute {
             main.post { exchange.waiting = false }
-            val done = orchestrator.send(text) { written -> main.post { exchange.writing = written } }
+            val done = orchestrator.send(
+                text,
+                onInput = { input -> main.post { exchange.input = input } },
+                onText = { written -> main.post { exchange.writing = written } },
+            )
             main.post {
                 exchange.cards = done.cards.map(::CardState)
                 exchange.problem = done.problem
@@ -416,6 +422,8 @@ private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChan
                     modifier = Modifier.padding(start = 12.dp),
                 )
             }
+            // While the model works: what it is reading, and its reply as it is written.
+            exchange.input?.let { ContextView(it, writing = exchange.writing) }
             return@Column
         }
         for (card in exchange.cards) {

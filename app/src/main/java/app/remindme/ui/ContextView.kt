@@ -33,16 +33,18 @@ import java.util.Locale
 /**
  * What the model read and wrote for one message: a collapsed line under the exchange that opens to Input,
  * each part of the context with its size and full text, and Output, the raw reply. A long press copies a block.
+ *
+ * With [writing], the model is still at work: the view starts open, and Output is the reply so far.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ContextView(record: ContextRecord) {
+fun ContextView(record: ContextRecord, writing: String? = null) {
     val context = LocalContext.current
-    var open by rememberSaveable { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(writing != null) }
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth()) {
         Text(
-            summary(record) + if (open) "  ▴" else "  ▾",
+            (if (writing != null) live(record) else summary(record)) + if (open) "  ▴" else "  ▾",
             style = MaterialTheme.typography.labelMedium,
             color = colors.onSurfaceVariant,
             modifier = Modifier
@@ -57,6 +59,10 @@ fun ContextView(record: ContextRecord) {
                 Text("Left out: $it", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp))
             }
             Heading("Output")
+            if (writing != null) {
+                Block("Reply so far", "writing…", writing.ifEmpty { "(nothing yet)" }, startOpen = true)
+                return@Column
+            }
             Block("Reply", if (record.retry == null) "${count(record.written)} written" else "first", record.output.ifEmpty { "(no reply)" })
             record.retry?.let { retry ->
                 Block("Reason the app gave", "", retry.reason)
@@ -74,9 +80,9 @@ private fun Heading(text: String) {
 /** One part: its name and size; tapping opens its full text. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Block(name: String, size: String, text: String) {
+private fun Block(name: String, size: String, text: String, startOpen: Boolean = false) {
     val context = LocalContext.current
-    var open by rememberSaveable { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(startOpen) }
     val colors = MaterialTheme.colorScheme
     Surface(color = colors.surfaceContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -107,6 +113,10 @@ private fun summary(record: ContextRecord): String {
     val read = if (record.read >= 0) count(record.read) else "≈ " + count(record.parts.sumOf { it.tokens })
     return "Read $read / ${count(record.size)} tokens · wrote ${count(record.written)}" + if (record.retry != null) " · retried" else ""
 }
+
+/** "Reading ≈ 1,412 / 2,048 tokens · writing", while the model is at work. */
+private fun live(record: ContextRecord): String =
+    "Reading ≈ ${count(record.parts.sumOf { it.tokens })} / ${count(record.size)} tokens · writing"
 
 private fun count(n: Int): String = NumberFormat.getIntegerInstance(Locale.ENGLISH).format(n)
 

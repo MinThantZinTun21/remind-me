@@ -292,6 +292,23 @@ class OrchestratorTest {
     }
 
     @Test
+    fun `the input is handed over before the model is asked, part for part as it then reads it`() {
+        task("Alpha", "2026-11-18T09:00")
+        model.contextTokens = 100
+        model.replies += "NONE"
+        var input: ContextRecord? = null
+        var askedBefore = -1
+
+        val record = orchestrator.send("hello", onInput = { input = it; askedBefore = model.said.size }).context
+
+        assertEquals(0, askedBefore)
+        assertEquals(record.parts.map { it.name to it.text }, input!!.parts.map { it.name to it.text })
+        assertEquals("1 task", input!!.leftOut)
+        assertEquals(100, input!!.size)
+        assertEquals("", input!!.output)
+    }
+
+    @Test
     fun `nothing is named as left out when everything fits`() {
         task("Alpha", "2026-11-18T09:00")
         model.replies += "NONE"
