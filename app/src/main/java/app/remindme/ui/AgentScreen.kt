@@ -219,9 +219,8 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onModels: () -> Unit, onCl
                 // A task moved out of the card's range, or deleted, leaves it; the rest stay soonest first.
                 val range = card.card.range
                 if (range != null && card.listed.any { it.id == taskId }) {
-                    card.listed = card.listed.mapNotNull { if (it.id == taskId) now else it }
-                        .filter { range.holds(it.due) }
-                        .sortedBy { it.due }
+                    val shown = card.listed.map { it.id }.toSet()
+                    card.listed = app.tools.dueBetween(range.from, range.to).filter { it.id in shown }
                 }
             }
             if (state == ModelState.READY || state == ModelState.LOADING) load()

@@ -176,9 +176,6 @@ object WordReader {
     data class Range(val from: LocalDateTime?, val to: LocalDateTime?, val label: String) {
         /** Every task, whenever it is due. */
         val all: Boolean get() = from == null && to == null
-
-        /** Whether a task due at [due] belongs in the range, as core's range query reads it. */
-        fun holds(due: LocalDateTime): Boolean = (from == null || due >= from) && (to == null || due < to)
     }
 
     /**
