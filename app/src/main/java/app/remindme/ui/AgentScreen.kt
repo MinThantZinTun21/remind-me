@@ -2,6 +2,7 @@ package app.remindme.ui
 
 import android.os.Handler
 import android.os.Looper
+import java.util.concurrent.Executors
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -66,7 +67,7 @@ import androidx.compose.ui.unit.dp
 import app.remindme.RemindMeApp
 import app.remindme.agent.ActionCard
 import app.remindme.agent.AgentEngine
-import app.remindme.agent.ReplyParser
+import app.remindme.agent.Orchestrator
 import app.remindme.core.DayRow
 import app.remindme.core.DeliveryStyle
 import app.remindme.core.Task
@@ -86,8 +87,8 @@ internal val EXAMPLES = listOf(
     "Meeting with the bank Friday 3 pm, warn me 30 minutes before",
 )
 
-/** One message the user sent and what came of it. */
-private class Exchange(val text: String) {
+/** One message the user sent and what came of it, as it stands on screen. */
+private class ExchangeState(val text: String) {
     var writing by mutableStateOf("")
     var cards by mutableStateOf<List<CardState>>(emptyList())
     var problem by mutableStateOf<String?>(null)
@@ -119,18 +120,22 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
     val main = remember { Handler(Looper.getMainLooper()) }
     val modelFile = remember { AgentEngine.modelFile(context) }
     val engine = remember { modelFile?.let { AgentEngine(it, context.cacheDir) } }
+    val orchestrator = remember { engine?.let { Orchestrator(app.agent, app.tools, it) } }
+    // The model is asked one thing at a time, off the main thread.
+    val worker = remember { Executors.newSingleThreadExecutor { Thread(it, "agent-model").apply { isDaemon = true } } }
     var state by remember { mutableStateOf(if (engine == null) ModelState.MISSING else ModelState.LOADING) }
     var loadNote by remember { mutableStateOf<String?>(null) }
     var typed by remember { mutableStateOf(draft) }
     val field = remember { FocusRequester() }
-    val exchanges = remember { mutableStateListOf<Exchange>() }
+    val exchanges = remember { mutableStateListOf<ExchangeState>() }
     val list = rememberLazyListState()
 
     fun load() {
-        val model = engine ?: return
+        val talk = orchestrator ?: return
         // A message sent while the model is still getting ready is already waiting behind this load.
         if (state != ModelState.WORKING) state = ModelState.LOADING
-        model.load(app.agent.systemInstruction()) { result ->
+        worker.execute {
+            val result = runCatching { talk.prepare() }
             main.post {
                 result.onSuccess {
                     loadNote = null
@@ -144,45 +149,24 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
     }
 
     fun send() {
-        val model = engine ?: return
+        val talk = orchestrator ?: return
         val text = typed.trim()
         if (text.isEmpty() || state !in CAN_SEND) return
-        val exchange = Exchange(text)
+        val exchange = ExchangeState(text)
         exchanges += exchange
         typed = ""
         state = ModelState.WORKING
-        model.ask(
-            app.agent.systemInstruction(),
-            app.agent.userMessage(text),
-            object : AgentEngine.Listener {
-                override fun onText(text: String) {
-                    main.post { exchange.writing = text }
-                }
-
-                override fun onDone(reply: AgentEngine.Reply) {
-                    main.post {
-                        val parsed = ReplyParser.parse(reply.text)
-                        exchange.cards = app.agent.act(parsed.calls).map(::CardState)
-                        // The agent answers with tool calls only; anything else it writes is not shown.
-                        exchange.problem = parsed.problem
-                            ?: "The agent found nothing to remind you of in that. Say what it is and when.".takeIf { parsed.calls.isEmpty() }
-                        exchange.timing = "Took ${seconds(reply.totalMs)} (first word after ${seconds(reply.firstTokenMs)})."
-                        exchange.finished = true
-                        state = ModelState.LOADING
-                        load()
-                    }
-                }
-
-                override fun onError(message: String) {
-                    main.post {
-                        exchange.problem = message
-                        exchange.finished = true
-                        state = ModelState.LOADING
-                        load()
-                    }
-                }
-            },
-        )
+        worker.execute {
+            val done = talk.send(text) { so -> main.post { exchange.writing = so } }
+            main.post {
+                exchange.cards = done.cards.map(::CardState)
+                exchange.problem = done.problem
+                exchange.timing = done.reply?.let { "Took ${seconds(it.totalMs)} (first word after ${seconds(it.firstTokenMs)})." }
+                exchange.finished = true
+                state = ModelState.LOADING
+                load()
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -190,7 +174,13 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
         // The screen is for typing: the keyboard is up as soon as it opens.
         if (engine != null) runCatching { field.requestFocus() }
     }
-    DisposableEffect(Unit) { onDispose { engine?.close() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            // Leaving the screen ends the visit, its conversation and the model.
+            worker.execute { orchestrator?.endVisit(); engine?.close() }
+            worker.shutdown()
+        }
+    }
     LaunchedEffect(exchanges.size, exchanges.lastOrNull()?.finished) {
         if (exchanges.isNotEmpty()) list.animateScrollToItem(exchanges.size - 1)
     }
@@ -349,7 +339,7 @@ internal fun Examples(onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun ExchangeView(exchange: Exchange, onChange: (CardState, CardChange) -> Unit, onEditTask: (Long) -> Unit) {
+private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChange) -> Unit, onEditTask: (Long) -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // What the user said, on the right, as in a conversation.
         Surface(

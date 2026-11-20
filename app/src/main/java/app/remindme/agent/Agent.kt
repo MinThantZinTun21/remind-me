@@ -55,17 +55,31 @@ class Agent(private val tools: Tools, private val clock: Clock) {
      * It holds no time of day, so the model can read it while the user is still typing; the time comes
      * with the message, in [userMessage].
      */
-    fun systemInstruction(): String {
+    fun systemInstruction(): String = rules() + "\n\n" + taskList(tools.list().take(MAX_TASKS))
+
+    /** The part of the instruction that is the same whatever tasks and conversation come with it. */
+    fun rules(): String {
         val today = clock.now().toLocalDate()
         val days = (1..COMING_DAYS).joinToString(", ") { ahead ->
             today.plusDays(ahead.toLong()).format(DAY) + if (ahead == 1) " (tomorrow)" else ""
         }
-        val tasks = tools.list().take(MAX_TASKS).joinToString("\n") { "- " + it.forTheAgent() }.ifEmpty { "- (none)" }
         return SYSTEM
             .replace("{today}", today.format(TODAY))
             .replace("{days}", days)
-            .replace("{tasks}", tasks)
     }
+
+    /** The tasks the model is shown, each with its id. */
+    fun taskList(tasks: List<Task>): String =
+        "Tasks:\n" + tasks.joinToString("\n") { "- " + it.forTheAgent() }.ifEmpty { "- (none)" }
+
+    /** A task in one short line for the conversation: "Call mom, Thu 19 Nov 09:00, once". */
+    fun summary(task: Task): String = listOfNotNull(
+        task.title,
+        task.due.format(SUMMARY_DUE),
+        task.repeat.forTheAgent() ?: "once",
+        "alarm".takeIf { task.style == DeliveryStyle.ALARM },
+        task.leadTimes.takeIf { it.isNotEmpty() }?.joinToString(" and ", prefix = "warns ", postfix = " min before") { it.toMinutes().toString() },
+    ).joinToString(", ")
 
     /** The user's text as the model gets it: the time now, then the text. */
     fun userMessage(text: String): String = "Now: ${clock.now().format(NOW)}\n$text"
@@ -237,6 +251,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         private val TODAY = DateTimeFormatter.ofPattern("EEEE yyyy-MM-dd", Locale.ENGLISH)
         private val DAY = DateTimeFormatter.ofPattern("EEE yyyy-MM-dd", Locale.ENGLISH)
         private val TASK_DUE = DateTimeFormatter.ofPattern("EEE yyyy-MM-dd HH:mm", Locale.ENGLISH)
+        private val SUMMARY_DUE = DateTimeFormatter.ofPattern("EEE d MMM HH:mm", Locale.ENGLISH)
 
         private const val TASK_PROPERTIES = """
           "title": {"type": "string", "description": "What to do, in a few words."},
@@ -275,8 +290,6 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         You are the tool-calling part of Remind Me, a reminders and alarms app on the user's phone. Whatever the user types is something they want set, changed or removed. You never talk to the user and never ask a question: your whole reply is tool calls and nothing else. You decide every detail of a task yourself.
         Today: {today}. Each message starts with the time now.
         Coming days: {days}.
-        Tasks:
-        {tasks}
 
         Rules:
         - Read the message for what the user wants, not for its wording. A statement is a request: "I wake up every morning at 8" is an alarm titled "Wake up", daily at 08:00; "meeting with the bank Friday 3pm" is a reminder for that meeting; "dentist tomorrow" is a reminder tomorrow.
@@ -288,6 +301,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         - style is alarm when the user says alarm, wake up, or that they must not miss it. Otherwise leave it out.
         - To change, move, cancel or finish something that is already in Tasks, call update_task, delete_task or complete_task with its id. Do not create it again.
         - If the message names nothing that could be a reminder, reply with the one word NONE.
+        - The tasks and the conversation so far come after these rules. "it" and "that" mean the task the conversation was last about.
         """.trimIndent()
     }
 }
