@@ -244,7 +244,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                                 CardChange.Undo -> {
                                     val before = card.dayChanges.lastOrNull()
                                     if (before == null) {
-                                        app.agent.undo(card.card)
+                                        orchestrator?.undo(card.card)
                                         card.undone = true
                                         null
                                     } else {

@@ -1,7 +1,10 @@
 package app.remindme.agent
 
+import app.remindme.core.DayButtons
+import app.remindme.core.TaskDetails
 import app.remindme.core.World
 import app.remindme.core.at
+import java.time.DayOfWeek
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -87,6 +90,51 @@ class OrchestratorTest {
 
         assertFalse(model.prefaces.last().instruction.contains("Conversation so far:"))
         assertEquals("Call mom", world.tools.list().single().title)
+    }
+
+    @Test
+    fun `an undo on a card reaches the model before the next message`() {
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        val card = orchestrator.send("call mom thursday at 9").cards.single()
+
+        orchestrator.undo(card)
+        model.replies += "NONE"
+        orchestrator.send("never mind")
+
+        val instruction = model.prefaces.last().instruction
+        assertTrue(instruction, "Remind Me: created id 1 Call mom, Thu 19 Nov 09:00, once (undone by you)" in instruction)
+        assertTrue(instruction, "Tasks:\n- (none)" in instruction)
+    }
+
+    @Test
+    fun `an edit made on the task reaches the model before the next message`() {
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        val task = orchestrator.send("call mom thursday at 9").cards.single().task!!
+
+        world.tools.update(task.id, TaskDetails(task.title, at("2026-11-20T09:00"), task.style, task.leadTimes, task.repeat))
+
+        assertTrue(orchestrator.conversation(), "created id 1 Call mom, Thu 19 Nov 09:00, once (you changed it to Call mom, Fri 20 Nov 09:00, once)" in orchestrator.conversation())
+        assertTrue(orchestrator.preface().instruction.contains("- id 1: Call mom | due Fri 2026-11-20 09:00"))
+    }
+
+    @Test
+    fun `a day tap on a card reaches the model before the next message`() {
+        model.replies += reply(call("create_task", "title" to "Gym", "due" to "2026-11-18T07:00", "repeat" to "daily"))
+        val task = orchestrator.send("gym every day at 7").cards.single().task!!
+
+        DayButtons(world.tools, world.clock).tap(task, DayOfWeek.SUNDAY)
+
+        assertTrue(orchestrator.conversation(), "(you changed it to Gym, Wed 18 Nov 07:00, weekly on mon,tue,wed,thu,fri,sat)" in orchestrator.conversation())
+    }
+
+    @Test
+    fun `a task the model changes later is not marked as changed by the owner`() {
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-18T18:00"))
+        orchestrator.send("call mom tomorrow at 6")
+        model.replies += reply(call("update_task", "id" to "1", "due" to "2026-11-18T19:00"))
+        orchestrator.send("change it to 7")
+
+        assertFalse(orchestrator.conversation(), "you changed it" in orchestrator.conversation())
     }
 
     @Test

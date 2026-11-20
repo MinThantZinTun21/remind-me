@@ -1,6 +1,9 @@
 package app.remindme.agent
 
 import app.remindme.core.Tools
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** What the model reads before any message: the instruction (rules, tasks, conversation so far) and the tools. */
 data class Preface(val instruction: String, val tools: String)
@@ -68,7 +71,11 @@ data class Exchange(
  */
 class Orchestrator(private val agent: Agent, private val tools: Tools, private val model: ModelPort) {
 
-    private val history = mutableListOf<Exchange>()
+    // The screen undoes cards on the main thread while a message may be running on the model's thread.
+    private val history = CopyOnWriteArrayList<Exchange>()
+
+    /** Cards the owner took back during this visit. */
+    private val undone: MutableSet<ActionCard> = Collections.synchronizedSet(Collections.newSetFromMap(IdentityHashMap()))
 
     /** What the model reads before the next message. */
     fun preface(): Preface = prefaceOf(prefaceParts())
@@ -123,15 +130,38 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
 
     private fun part(name: String, text: String) = ContextPart(name, text, (text.length + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN)
 
+    /** Takes back what [card] reports, and tells the model so with the next message. */
+    fun undo(card: ActionCard) = agent.undo(card).also { undone += card }
+
     /** The owner left the agent screen or changed the model: the next message starts afresh. */
-    fun endVisit() = history.clear()
+    fun endVisit() {
+        history.clear()
+        undone.clear()
+    }
 
     /** The conversation so far, a line for the owner's words and one for each card. */
-    fun conversation(): String = history.joinToString("\n") { exchange ->
-        val lines = exchange.cards.map(::line).ifEmpty {
+    fun conversation(): String {
+        // Only the newest card on a task can have been overtaken by the owner's own change since.
+        val newest: MutableSet<ActionCard> = Collections.newSetFromMap(IdentityHashMap())
+        history.flatMap { it.cards }.filter { it.went && it.task != null }.associateBy { it.task!!.id }.values.forEach { newest += it }
+        return history.joinToString("\n") { exchange -> lines(exchange, newest) }
+    }
+
+    private fun lines(exchange: Exchange, newest: Set<ActionCard>): String {
+        val lines = exchange.cards.map { card -> line(card) + afterwards(card, card in newest) }.ifEmpty {
             listOf(if (exchange.reply == null || exchange.problem != NOTHING_TO_DO) "nothing done: ${exchange.problem}" else "nothing to remind you of")
         }
-        (listOf("User: ${exchange.words}") + lines.map { "Remind Me: $it" }).joinToString("\n")
+        return (listOf("User: ${exchange.words}") + lines.map { "Remind Me: $it" }).joinToString("\n")
+    }
+
+    /** What the owner did to the card's task after the card: took it back, or changed the task by hand. */
+    private fun afterwards(card: ActionCard, newest: Boolean): String {
+        if (card in undone) return " (undone by you)"
+        val task = card.task ?: return ""
+        if (!newest || card.action !in CHANGING) return ""
+        val now = tools.list().firstOrNull { it.id == task.id }
+            ?: return if (tools.history().any { it.id == task.id }) " (you marked it done)" else " (you deleted it)"
+        return if (agent.summary(now) == agent.summary(task)) "" else " (you changed it to ${agent.summary(now)})"
     }
 
     private fun line(card: ActionCard): String {
@@ -164,6 +194,8 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         private const val CHARS_PER_TOKEN = 4
 
         /** The parts that make up the instruction, in the order the model reads them. */
+        private val CHANGING = setOf(ActionCard.Action.CREATE, ActionCard.Action.UPDATE)
+
         private val INSTRUCTION_PARTS = setOf("Instruction", "Tasks", "Conversation")
     }
 }
