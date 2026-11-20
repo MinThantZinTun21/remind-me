@@ -1,6 +1,8 @@
 package app.remindme.agent
 
 import app.remindme.core.DayButtons
+import app.remindme.core.Fire
+import app.remindme.core.FireKind
 import app.remindme.core.TaskDetails
 import app.remindme.core.ToolResult
 import app.remindme.core.World
@@ -41,6 +43,37 @@ class OrchestratorTest {
         assertTrue(exchange.cards.single().went)
         assertEquals(at("2026-11-19T09:00"), world.tools.list().single().due)
         assertEquals(null, exchange.problem)
+    }
+
+    @Test
+    fun `snoozing a task that has come round brings it back then, and undo takes the snooze back`() {
+        val task = (world.tools.create(TaskDetails("Call mom", at("2026-11-17T10:05"))) as ToolResult.Ok).task
+        world.advanceTo("2026-11-17T10:10")
+        model.replies += reply(call("create_task", "title" to "Gym", "when" to "at 6 pm"))
+        orchestrator.send("gym at 6 pm")
+        model.replies += reply(call("snooze_task", "id" to task.id.toString(), "for" to "30 minutes"))
+
+        val card = orchestrator.send("snooze mom for 30 minutes").cards.single()
+
+        assertTrue(card.refusal, card.went)
+        assertEquals(at("2026-11-17T10:05"), world.tools.list().first { it.id == task.id }.due)
+        assertTrue(Fire(task.id, FireKind.SNOOZE, at("2026-11-17T10:40")) in world.scheduler.pending())
+        assertTrue(orchestrator.conversation(), "Remind Me: snoozed id ${task.id} Call mom" in orchestrator.conversation())
+
+        orchestrator.undo(card)
+        assertFalse(world.scheduler.pending().any { it.kind == FireKind.SNOOZE })
+    }
+
+    @Test
+    fun `snoozing a task not yet due changes nothing and says to move it`() {
+        model.replies += reply(call("create_task", "title" to "Gym", "when" to "at 6 pm"))
+        orchestrator.send("gym at 6 pm")
+        repeat(2) { model.replies += reply(call("snooze_task", "id" to "1")) }
+
+        val card = orchestrator.send("snooze the gym").cards.single()
+
+        assertEquals("Gym isn't due yet. To move it, say when.", card.refusal)
+        assertEquals(at("2026-11-17T18:00"), world.tools.list().single().due)
     }
 
     @Test

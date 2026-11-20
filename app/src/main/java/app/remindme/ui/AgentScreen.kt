@@ -414,6 +414,11 @@ private fun ActionCardView(state: CardState, onChange: (CardChange) -> Unit, onE
             state.task?.let { task ->
                 Text(task.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 10.dp))
                 Text(Times.dateAndTime(context, task.due), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 2.dp))
+                val back = task.snoozedUntil?.takeIf { card.action == ActionCard.Action.SNOOZE && card.went && !undone }
+                back?.let {
+                    val at = java.time.LocalDateTime.ofInstant(it, java.time.ZoneId.systemDefault())
+                    Text("Back at ${Times.dateAndTime(context, at)}", style = MaterialTheme.typography.bodyMedium, color = accent, modifier = Modifier.padding(top = 2.dp))
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -509,6 +514,7 @@ private fun ActionCard.heading(undone: Boolean): String {
         ActionCard.Action.UPDATE -> if (went) "Changed" else "Could not change this"
         ActionCard.Action.DELETE -> if (went) "Deleted" else "Could not delete this"
         ActionCard.Action.COMPLETE -> if (went) "Marked done" else "Could not mark this done"
+        ActionCard.Action.SNOOZE -> if (went) "Snoozed" else "Could not snooze this"
         ActionCard.Action.UNKNOWN -> "Did nothing"
     }
     return if (undone) "$did, then undone" else did

@@ -263,6 +263,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
             ActionCard.Action.UPDATE -> "changed id ${task.id} to ${agent.summary(task)}"
             ActionCard.Action.DELETE -> "deleted id ${task.id} ${agent.summary(task)}"
             ActionCard.Action.COMPLETE -> "marked id ${task.id} ${task.title} done"
+            ActionCard.Action.SNOOZE -> "snoozed id ${task.id} ${task.title}"
             ActionCard.Action.UNKNOWN -> "could not ${verb(card)}: ${card.refusal}"
         }
     }
@@ -272,6 +273,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         ActionCard.Action.UPDATE -> "change"
         ActionCard.Action.DELETE -> "delete"
         ActionCard.Action.COMPLETE -> "mark done"
+        ActionCard.Action.SNOOZE -> "snooze"
         ActionCard.Action.UNKNOWN -> "run ${card.call.name}"
     }
 

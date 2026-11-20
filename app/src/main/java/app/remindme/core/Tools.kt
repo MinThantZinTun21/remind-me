@@ -157,6 +157,23 @@ class Tools(
         saved(task.copy(snoozedUntil = clock.instant().plus(SNOOZE_LENGTH), ringingUntil = null))
     }
 
+    /**
+     * The agent snoozes an occurrence that has come round for [length]; the due time does not move. Refused
+     * for an occurrence not yet due, and for a snooze longer than a day or reaching the next occurrence:
+     * those are moves, not snoozes.
+     */
+    fun snoozeFor(id: Long, length: Duration): ToolResult = exclusively {
+        val task = onTheList(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
+        val now = clock.now()
+        if (task.due > now) return ToolResult.Refused("${task.title} isn't due yet. To move it, say when.")
+        val back = now.plus(length)
+        if (length > MAX_SNOOZE || task.nextDue()?.let { back >= it } == true) {
+            return ToolResult.Refused("That is longer than a snooze. To move ${task.title}, say when.")
+        }
+        announcer.clear(id)
+        saved(task.copy(snoozedUntil = clock.instant().plus(length), ringingUntil = null))
+    }
+
     /** The user silences the task without saying it is done: it stays overdue and says nothing more. */
     fun stop(id: Long): ToolResult = exclusively {
         val task = onTheList(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
@@ -174,6 +191,7 @@ class Tools(
     private inline fun <T> exclusively(block: () -> T): T = synchronized(fires, block)
 
     private companion object {
+        val MAX_SNOOZE: Duration = Duration.ofHours(24)
         const val NEEDS_TITLE = "A task needs a title."
         const val ALREADY_PASSED = "That due time has already passed."
         const val NO_SUCH_TASK = "That task is no longer on the list."

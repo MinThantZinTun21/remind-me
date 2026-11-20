@@ -144,6 +144,20 @@ object WordReader {
         return found.filter { !it.isZero }.distinct().sortedDescending().takeIf { it.size in 1..2 }
     }
 
+    /**
+     * How long a snooze [words] ask for, said at [now]: "for an hour", "30 minutes", "until 5". No words is
+     * ten minutes, as from the notification. Null when the words cannot be read.
+     */
+    fun snooze(words: String, now: LocalDateTime): Duration? {
+        val tokens = tokens(words).dropWhile { it in SNOOZE_FILLERS }
+        if (tokens.isEmpty()) return Duration.ofMinutes(10)
+        if (tokens.first() in setOf("until", "till", "til")) {
+            val back = tokens.drop(1).takeIf { it.isNotEmpty() }?.let { due(it.joinToString(" "), now) } ?: return null
+            return Duration.between(now, back).takeIf { !it.isNegative && !it.isZero }
+        }
+        return warn(tokens.joinToString(" "))?.singleOrNull()
+    }
+
     private fun warnUnit(token: String): Duration? = when (canonical(token).singleOrNull()) {
         "minute" -> Duration.ofMinutes(1)
         "hour" -> Duration.ofHours(1)
@@ -390,6 +404,7 @@ object WordReader {
     private val REPEAT_FILLERS = setOf("on", "the", "and", "a", "at", "of", "in", "to", "every")
     /** Words that carry no meaning of their own in words for an early warning. */
     private val WARN_FILLERS = setOf("before", "early", "earlier", "ahead", "beforehand", "prior", "in", "advance", "the", "and", "to", "it")
+    private val SNOOZE_FILLERS = setOf("for", "another", "more", "again", "snooze", "it")
     private val ALARM_WORDS = setOf("alarm", "alarms", "wake", "waking", "woken", "wakes")
     private val TOKEN = Regex("\\d{1,2}[:.]\\d{2}|\\d{1,2}/\\d{1,2}|\\d+(?:st|nd|rd|th)|\\d+|[a-z]+")
     private val CLOCK = Regex("\\d{1,2}[:.]\\d{2}")

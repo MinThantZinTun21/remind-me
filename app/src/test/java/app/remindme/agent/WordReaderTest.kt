@@ -286,4 +286,17 @@ class WordReaderTest {
         assertFalse(WordReader.asksForAlarm("call mom at 9"))
         assertFalse(WordReader.asksForAlarm("important meeting at 3"))
     }
+
+    @Test
+    fun `a snooze is ten minutes, a stated length, or until a time`() {
+        assertEquals(Duration.ofMinutes(10), WordReader.snooze("", now))
+        assertEquals(Duration.ofHours(1), WordReader.snooze("for an hour", now))
+        assertEquals(Duration.ofMinutes(30), WordReader.snooze("30 minutes", now))
+        assertEquals(Duration.ofMinutes(30), WordReader.snooze("half an hour", now))
+        assertEquals(Duration.ofMinutes(20), WordReader.snooze("another 20 minutes", now))
+        assertEquals(Duration.ofHours(7).plusMinutes(45), WordReader.snooze("until 5", now))
+        assertEquals(Duration.ofMinutes(15), WordReader.snooze("till 9:30", now))
+        assertNull(WordReader.snooze("for a bit", now))
+        assertNull(WordReader.snooze("an hour and a day", now))
+    }
 }

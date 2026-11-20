@@ -28,7 +28,7 @@ data class ActionCard(
     /** How to take the action back; null when nothing changed. */
     val undo: Undo?,
 ) {
-    enum class Action { CREATE, UPDATE, DELETE, COMPLETE, UNKNOWN }
+    enum class Action { CREATE, UPDATE, DELETE, COMPLETE, SNOOZE, UNKNOWN }
 
     val went: Boolean get() = refusal == null
 }
@@ -37,7 +37,7 @@ sealed interface Undo {
     /** Takes away the task the agent created. */
     data class Remove(val taskId: Long) : Undo
 
-    /** Puts a task back as it was before the agent changed, deleted or completed it. */
+    /** Puts a task back as it was before the agent changed, deleted, completed or snoozed it. */
     data class PutBack(val task: Task) : Undo
 }
 
@@ -45,9 +45,9 @@ sealed interface Undo {
  * The agent's side of the tools: what the model on the phone is told it can call, what it is told about
  * the clock and the tasks, and how each call it writes becomes a call on [Tools].
  *
- * The agent decides every property of a task. Nothing here chooses a due time, a repeat rule, a lead time
- * or a delivery style for it: a call that leaves one out gets what [TaskDetails] gives by default, and a
- * value the app cannot read is refused, not guessed.
+ * The model copies the user's own words for when, how it comes round, an early warning and a snooze, and
+ * [WordReader] reads them. Nothing here guesses: a call that leaves one out gets what [TaskDetails] gives by
+ * default, and words the app cannot read, or that are not the user's, are refused.
  */
 class Agent(private val tools: Tools, private val clock: Clock) {
 
@@ -97,6 +97,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         "update_task" -> onExisting(call, visible, ActionCard.Action.UPDATE) { before -> update(call, before, message) }
         "delete_task" -> onExisting(call, visible, ActionCard.Action.DELETE) { before -> tools.delete(before.id) }
         "complete_task" -> onExisting(call, visible, ActionCard.Action.COMPLETE) { before -> tools.done(before.id) }
+        "snooze_task" -> onExisting(call, visible, ActionCard.Action.SNOOZE) { before -> tools.snoozeFor(before.id, snooze(call.args["for"], message)) }
         else -> ActionCard(call, ActionCard.Action.UNKNOWN, null, "The app has no tool called \"${call.name}\".", null)
     }
 
@@ -191,6 +192,13 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         return WordReader.warn(given) ?: throw Unreadable("Remind Me can't read the warning '$given' — set it by hand.")
     }
 
+    /** How long the user's words for a snooze ask for; ten minutes when the call gives none. */
+    private fun snooze(words: String?, message: String?): Duration {
+        val given = words?.trim().orEmpty()
+        if (given.isNotEmpty()) copied(given, message, "the snooze")
+        return WordReader.snooze(given, clock.now()) ?: throw Unreadable("Remind Me can't read the snooze '$given'.")
+    }
+
     /**
      * What the user's words for how the task comes round say, for a task first due on [start]; null when
      * the call says nothing about repeating. Words the app cannot read are refused, never made a one-time task.
@@ -266,6 +274,12 @@ class Agent(private val tools: Tools, private val clock: Clock) {
           {"type": "function", "function": {"name": "delete_task",
             "description": "Removes a task from the Tasks list.",
             "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}}},
+          {"type": "function", "function": {"name": "snooze_task",
+            "description": "Snoozes a task from the Tasks list that has already come round: it comes back later and its due time stays.",
+            "parameters": {"type": "object", "properties": {
+              "id": {"type": "integer"},
+              "for": {"type": "string", "description": "The user's own words for how long, copied from the message, like for an hour or until 5. Leave out for 10 minutes."}},
+              "required": ["id"]}}},
           {"type": "function", "function": {"name": "complete_task",
             "description": "Marks a task from the Tasks list as done.",
             "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}}}
@@ -284,6 +298,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         - warn is the user's own words for an early warning, copied from the message: "30 minutes before", "the day before", "an hour and a day before". Leave warn out unless the user asks for an early warning; never choose one yourself.
         - style is alarm only when the user says alarm, wake, wake me, or don't let me miss it. Otherwise leave it out.
         - To change, move, cancel or finish something that is already in Tasks, call update_task, delete_task or complete_task with its id. Do not create it again.
+        - To be told again later about something that has already come round ("snooze it", "remind me again in an hour"), call snooze_task with its id; for is the user's own words for how long. To change when it is due, call update_task.
         - If the message names nothing that could be a reminder, reply with the one word NONE.
         - The tasks and the conversation so far come after these rules. "it" and "that" mean the task the conversation was last about.
         """.trimIndent()
