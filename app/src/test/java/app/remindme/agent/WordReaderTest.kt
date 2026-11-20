@@ -1,6 +1,15 @@
 package app.remindme.agent
 
 import app.remindme.core.at
+import app.remindme.core.RepeatRule
+import java.time.DayOfWeek.FRIDAY
+import java.time.DayOfWeek.MONDAY
+import java.time.DayOfWeek.SATURDAY
+import java.time.DayOfWeek.SUNDAY
+import java.time.DayOfWeek.THURSDAY
+import java.time.DayOfWeek.TUESDAY
+import java.time.DayOfWeek.WEDNESDAY
+import java.time.LocalDate
 import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -166,5 +175,82 @@ class WordReaderTest {
         assertEquals(emptyList<String>(), WordReader.notIn("on the 5th", "pay rent 5th"))
         assertEquals(listOf("wednesday"), WordReader.notIn("wednesday at 9", "tomorrow at 9 dentist"))
         assertEquals(listOf("17", "0"), WordReader.notIn("17:00", "call mom at 5 pm"))
+    }
+
+    private fun rule(words: String) = WordReader.repeat(words, now.toLocalDate(), now)?.rule
+
+    private val weekdays = setOf(MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY)
+
+    @Test
+    fun `chosen weekdays repeat on those days`() {
+        assertEquals(RepeatRule.weekdays(setOf(SUNDAY, WEDNESDAY)), rule("every sunday and wednesday"))
+        assertEquals(RepeatRule.weekdays(setOf(SUNDAY, WEDNESDAY)), rule("sundays and wednesdays"))
+        assertEquals(RepeatRule.weekdays(setOf(MONDAY, WEDNESDAY, FRIDAY)), rule("every mon, wed and fri"))
+        assertEquals(RepeatRule.weekdays(setOf(TUESDAY, THURSDAY)), rule("on tuesdays and thursdays"))
+        assertEquals(RepeatRule.weekdays(setOf(MONDAY)), rule("every monday"))
+    }
+
+    @Test
+    fun `weekends and the working week`() {
+        assertEquals(RepeatRule.weekdays(setOf(SATURDAY, SUNDAY)), rule("weekends"))
+        assertEquals(RepeatRule.weekdays(setOf(SATURDAY, SUNDAY)), rule("every weekend"))
+        assertEquals(RepeatRule.weekdays(weekdays), rule("every weekday"))
+        assertEquals(RepeatRule.weekdays(weekdays), rule("weekdays"))
+        assertEquals(RepeatRule.weekdays(weekdays), rule("monday to friday"))
+        assertEquals(RepeatRule.weekdays(weekdays), rule("mon-fri"))
+        assertEquals(RepeatRule.weekdays(weekdays), rule("every working day"))
+    }
+
+    @Test
+    fun `days can be taken out with except`() {
+        assertEquals(RepeatRule.weekdays(setOf(MONDAY, TUESDAY, WEDNESDAY, THURSDAY, SATURDAY, SUNDAY)), rule("every day except friday"))
+        assertEquals(RepeatRule.weekdays(setOf(TUESDAY, WEDNESDAY, THURSDAY, FRIDAY)), rule("weekdays except monday"))
+    }
+
+    @Test
+    fun `every day, every week and every few days or weeks`() {
+        assertEquals(RepeatRule.daily(), rule("every day"))
+        assertEquals(RepeatRule.daily(), rule("daily"))
+        assertEquals(RepeatRule.daily(), rule("every morning"))
+        assertEquals(RepeatRule.everyDays(3), rule("every 3 days"))
+        assertEquals(RepeatRule.everyWeeks(1), rule("every week"))
+        assertEquals(RepeatRule.everyWeeks(1), rule("weekly"))
+        assertEquals(RepeatRule.everyWeeks(2), rule("every 2 weeks"))
+    }
+
+    @Test
+    fun `every other`() {
+        assertEquals(RepeatRule.everyDays(2), rule("every other day"))
+        assertEquals(RepeatRule.everyWeeks(2), rule("every other week"))
+        val friday = WordReader.repeat("every other friday", now.toLocalDate(), now)!!
+        assertEquals(RepeatRule.everyWeeks(2), friday.rule)
+        assertEquals(FRIDAY, friday.on)
+    }
+
+    @Test
+    fun `monthly and yearly`() {
+        assertEquals(RepeatRule.monthly(), rule("every month"))
+        assertEquals(RepeatRule.monthly(), rule("monthly"))
+        assertEquals(RepeatRule.yearly(), rule("every year"))
+        assertEquals(RepeatRule.yearly(), rule("yearly"))
+    }
+
+    @Test
+    fun `a repeat can end after a stretch or on a day`() {
+        assertEquals(RepeatRule.weekdays(setOf(MONDAY), until = LocalDate.parse("2026-12-08")), rule("every monday for 3 weeks"))
+        assertEquals(RepeatRule.daily(until = LocalDate.parse("2026-11-22")), rule("daily for 5 days"))
+        assertEquals(RepeatRule.daily(until = LocalDate.parse("2026-11-20")), rule("daily until friday"))
+        assertEquals(RepeatRule.everyWeeks(1, until = LocalDate.parse("2026-12-20")), rule("every week until december 20"))
+        val end = WordReader.repeat("until friday", now.toLocalDate(), now)!!
+        assertEquals(null, end.rule)
+        assertEquals(LocalDate.parse("2026-11-20"), end.until)
+    }
+
+    @Test
+    fun `no repeat words is once, and words it cannot read are not guessed`() {
+        assertEquals(RepeatRule.ONCE, rule(""))
+        assertEquals(RepeatRule.ONCE, rule("once"))
+        assertNull(WordReader.repeat("every full moon", now.toLocalDate(), now))
+        assertNull(WordReader.repeat("every other monday and friday", now.toLocalDate(), now))
     }
 }

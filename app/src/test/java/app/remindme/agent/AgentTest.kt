@@ -99,37 +99,57 @@ class AgentTest {
     }
 
     @Test
-    fun `the repeat arguments map onto every repeat rule the app has`() {
-        fun rule(vararg args: Pair<String, String>) =
-            act("create_task", "title" to "x", "when" to "tomorrow at 8", *args).task!!.repeat
+    fun `the user's words for how it comes round become every repeat rule the app has`() {
+        fun rule(words: String) = act("create_task", "title" to "x", "when" to "tomorrow at 8", "repeat" to words).task!!.repeat
 
-        assertEquals(RepeatRule.daily(), rule("repeat" to "daily"))
-        assertEquals(RepeatRule.everyDays(3), rule("repeat" to "daily", "repeat_every" to "3"))
-        assertEquals(RepeatRule.everyWeeks(1), rule("repeat" to "weekly"))
-        assertEquals(RepeatRule.everyWeeks(2), rule("repeat" to "weekly", "repeat_every" to "2"))
-        assertEquals(
-            RepeatRule.weekdays(setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY)),
-            rule("repeat" to "weekly", "repeat_days" to "mon, wed,Friday"),
-        )
+        assertEquals(RepeatRule.daily(), rule("daily"))
+        assertEquals(RepeatRule.everyDays(3), rule("every 3 days"))
+        assertEquals(RepeatRule.everyWeeks(1), rule("weekly"))
+        assertEquals(RepeatRule.everyWeeks(2), rule("every 2 weeks"))
+        assertEquals(RepeatRule.weekdays(setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY)), rule("every mon, wed and fri"))
         assertEquals(
             RepeatRule.weekdays(setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)),
-            rule("repeat" to "weekdays"),
+            rule("weekdays"),
         )
-        assertEquals(
-            RepeatRule.weekdays(setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)),
-            rule("repeat" to "weekdays", "repeat_days" to "mon,fri"),
-        )
-        assertEquals(RepeatRule.monthly(), rule("repeat" to "monthly"))
-        assertEquals(RepeatRule.yearly(until = LocalDate.parse("2030-01-01")), rule("repeat" to "yearly", "repeat_until" to "2030-01-01"))
-        assertEquals(RepeatRule.ONCE, rule("repeat" to "none"))
+        assertEquals(RepeatRule.monthly(), rule("monthly"))
+        assertEquals(RepeatRule.yearly(until = LocalDate.parse("2027-01-01")), rule("every year until january 1"))
+        assertEquals(RepeatRule.ONCE, rule("none"))
     }
 
     @Test
-    fun `a weekly task on chosen weekdays starts on the first of those days after now`() {
-        val task = act("create_task", "title" to "Gym", "when" to "7 am", "repeat" to "weekly", "repeat_days" to "mon,thu").task!!
+    fun `a task on chosen weekdays starts on the first of those days after now`() {
+        val task = act("create_task", "title" to "Gym", "when" to "7 am", "repeat" to "every monday and thursday").task!!
 
         // Tuesday 07:00 has passed and is not one of the days: the first occurrence is Thursday.
         assertEquals(at("2026-11-19T07:00"), task.due)
+    }
+
+    @Test
+    fun `a single weekday every other week starts on that weekday`() {
+        val task = act("create_task", "title" to "Bins", "when" to "8 am", "repeat" to "every other friday").task!!
+
+        assertEquals(at("2026-11-20T08:00"), task.due)
+        assertEquals(RepeatRule.everyWeeks(2), task.repeat)
+    }
+
+    @Test
+    fun `repeat words the app cannot read are refused, never made a one-time task`() {
+        assertEquals(
+            "Remind Me can't repeat 'every full moon' yet — set it by hand.",
+            act("create_task", "title" to "x", "when" to "tomorrow at 9", "repeat" to "every full moon").refusal,
+        )
+        assertEquals(emptyList<Any>(), world.tools.list())
+    }
+
+    @Test
+    fun `repeat words that are not in the user's message are refused`() {
+        val card = agent.act(
+            listOf(call("create_task", "title" to "Gym", "when" to "7 am", "repeat" to "every day")),
+            message = "gym at 7 am every monday",
+        ).single()
+
+        assertEquals("The words for how it comes round, \"every day\", are not all in the message: day. Copy the user's own words.", card.refusal)
+        assertEquals(emptyList<Any>(), world.tools.list())
     }
 
     @Test
@@ -138,10 +158,6 @@ class AgentTest {
         assertEquals(
             "The app cannot read the lead time \"1 hour\".",
             act("create_task", "title" to "x", "when" to "tomorrow at 9", "warn_before" to "1 hour").refusal,
-        )
-        assertEquals(
-            "The app cannot read the repeat rule \"fortnightly\".",
-            act("create_task", "title" to "x", "when" to "tomorrow at 9", "repeat" to "fortnightly").refusal,
         )
         assertEquals("The app has no tool called \"send_email\".", act("send_email", "to" to "x").refusal)
         assertEquals(emptyList<Any>(), world.tools.list())
@@ -202,7 +218,7 @@ class AgentTest {
             TaskDetails("Call mom", at("2026-11-18T09:00"), leadTimes = listOf(Duration.ofMinutes(15)), repeat = RepeatRule.daily()),
         ) as ToolResult.Ok).task
 
-        act("update_task", "id" to before.id.toString(), "warn_before" to "0", "repeat_until" to "2026-12-31")
+        act("update_task", "id" to before.id.toString(), "warn_before" to "0", "repeat" to "until december 31")
 
         val after = world.tools.list().single()
         assertEquals(emptyList<Duration>(), after.leadTimes)
@@ -228,7 +244,7 @@ class AgentTest {
         agent.undo(act("update_task", id, "when" to "tomorrow at 9", "warn_before" to "0", "style" to "alarm"))
         assertEquals(listOf(created), world.tools.list())
 
-        val moved = act("update_task", id, "when" to "thursday at 9", "repeat_days" to "fri")
+        val moved = act("update_task", id, "when" to "thursday at 9")
         assertTrue(moved.refusal, moved.went)
         assertEquals(at("2026-11-19T09:00"), world.tools.list().single().due)
     }
@@ -300,9 +316,9 @@ class AgentTest {
     }
 
     @Test
-    fun `the agent has one word for a working-week repeat, so it need not list the five days`() {
-        assertTrue("every weekday, every working day or Monday to Friday is weekdays" in instruction())
-        assertTrue("\"weekdays\"" in Agent.TOOLS_JSON)
+    fun `the agent is told to copy the user's words for how it comes round`() {
+        assertTrue("repeat is the user's own words for how it comes round, end included" in instruction())
+        assertFalse("repeat_days" in Agent.TOOLS_JSON)
     }
 
     @Test

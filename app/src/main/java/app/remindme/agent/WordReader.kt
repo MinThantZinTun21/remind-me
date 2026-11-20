@@ -1,5 +1,6 @@
 package app.remindme.agent
 
+import app.remindme.core.RepeatRule
 import java.time.DayOfWeek
 import java.time.Duration
 import java.time.LocalDate
@@ -24,6 +25,97 @@ object WordReader {
         if (tokens.isEmpty()) return keep ?: now.plusHours(1)
         val said = Said.read(tokens) ?: return null
         return said.resolve(now, alarm, keep)
+    }
+
+    /** What the owner's words for how a task comes round say: the rule, its last day, and the weekday an every-few-weeks rule falls on. */
+    data class RepeatWords(val rule: RepeatRule?, val until: LocalDate? = null, val on: DayOfWeek? = null)
+
+    /**
+     * The repeat rule [words] mean, for a task first due on [start], said at [now]; null when they cannot be
+     * read. No words is once. "until friday" alone gives only a last day, for a rule the task already has.
+     */
+    fun repeat(words: String, start: LocalDate, now: LocalDateTime): RepeatWords? {
+        // "mon-fri" is a range, as "monday to friday" is.
+        val tokens = tokens(words.replace(Regex("(?<=[a-zA-Z])\\s*-\\s*(?=[a-zA-Z])"), " to "))
+        if (tokens.isEmpty() || tokens == listOf("once") || tokens == listOf("none") || tokens == listOf("no")) return RepeatWords(RepeatRule.ONCE)
+        var every: Int? = null
+        var unit: String? = null
+        val days = mutableSetOf<DayOfWeek>()
+        val except = mutableSetOf<DayOfWeek>()
+        var excepting = false
+        var until: LocalDate? = null
+        var i = 0
+        fun put(day: DayOfWeek) { if (excepting) except += day else days += day }
+        while (i < tokens.size) {
+            val token = tokens[i]
+            val next = tokens.getOrNull(i + 1)
+            val word = canonical(token).singleOrNull() ?: return null
+            when {
+                token == "every" || token == "each" -> when {
+                    next == "other" -> { every = 2; i++ }
+                    next != null && number(next) != null -> { every = number(next); i++ }
+                }
+                token == "fortnightly" -> { unit = "week"; every = 2 }
+                token == "daily" -> unit = "day"
+                token == "weekly" -> unit = "week"
+                token == "monthly" -> unit = "month"
+                token == "yearly" || token == "annually" -> unit = "year"
+                token == "working" && next != null && canonical(next).singleOrNull() == "day" -> { WORKING_WEEK.forEach(::put); i++ }
+                word == "weekday" -> WORKING_WEEK.forEach(::put)
+                word == "weekend" -> { put(DayOfWeek.SATURDAY); put(DayOfWeek.SUNDAY) }
+                weekday(token) != null && next == "to" && tokens.getOrNull(i + 2)?.let(::weekday) != null -> {
+                    val from = weekday(token)!!
+                    val to = weekday(tokens[i + 2])!!
+                    var day = from
+                    while (true) { put(day); if (day == to) break; day = day.plus(1) }
+                    i += 2
+                }
+                weekday(token) != null -> put(weekday(token)!!)
+                word == "day" || token in setOf("morning", "evening", "night", "afternoon") -> if (!excepting) unit = "day"
+                word in setOf("week", "month", "year") -> unit = word
+                token in setOf("except", "but", "not") -> excepting = true
+                token == "for" && next != null && amount(next) != null -> {
+                    val n = amount(next)!!
+                    val span = when (tokens.getOrNull(i + 2)?.let { canonical(it).singleOrNull() }) {
+                        "day" -> start.plusDays(n)
+                        "week" -> start.plusWeeks(n)
+                        "month" -> start.plusMonths(n)
+                        "year" -> start.plusYears(n)
+                        else -> return null
+                    }
+                    until = span.minusDays(1)
+                    i += 2
+                }
+                token in setOf("until", "till", "til", "through", "thru") -> {
+                    until = due(tokens.drop(i + 1).joinToString(" "), now)?.toLocalDate() ?: return null
+                    i = tokens.size
+                }
+                token in REPEAT_FILLERS -> Unit
+                else -> return null
+            }
+            i++
+        }
+        val n = every ?: 1
+        val rule = when {
+            except.isNotEmpty() -> {
+                val from = days.ifEmpty { if (unit == "day") DayOfWeek.entries.toSet() else return null }
+                (from - except).takeIf { it.isNotEmpty() && n == 1 }?.let { RepeatRule.weekdays(it, until) } ?: return null
+            }
+            days.isNotEmpty() && n > 1 -> {
+                val on = days.singleOrNull() ?: return null
+                return RepeatWords(RepeatRule.everyWeeks(n, until), until, on)
+            }
+            days.size == 7 -> RepeatRule.daily(until)
+            days.isNotEmpty() -> RepeatRule.weekdays(days, until)
+            unit == "day" -> RepeatRule.everyDays(n, until)
+            unit == "week" -> RepeatRule.everyWeeks(n, until)
+            unit == "month" && n == 1 -> RepeatRule.monthly(until)
+            unit == "year" && n == 1 -> RepeatRule.yearly(until)
+            unit != null -> return null
+            until != null -> null
+            else -> return null
+        }
+        return RepeatWords(rule, until)
     }
 
     /** The words of [words] that are not in [message]: a sign the model worked something out instead of copying. */
@@ -252,6 +344,10 @@ object WordReader {
     private fun month(token: String): Int? = MONTHS[token]
 
     private val MORNING = LocalTime.of(9, 0)
+    private val WORKING_WEEK = listOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
+
+    /** Words that carry no meaning of their own in words for how a task comes round. */
+    private val REPEAT_FILLERS = setOf("on", "the", "and", "a", "at", "of", "in", "to", "every")
     private val TOKEN = Regex("\\d{1,2}[:.]\\d{2}|\\d{1,2}/\\d{1,2}|\\d+(?:st|nd|rd|th)|\\d+|[a-z]+")
     private val CLOCK = Regex("\\d{1,2}[:.]\\d{2}")
     private val SLASH = Regex("\\d{1,2}/\\d{1,2}")
@@ -272,7 +368,8 @@ object WordReader {
     private val SYNONYMS = mapOf(
         "min" to "minute", "mins" to "minute", "minutes" to "minute", "hr" to "hour", "hrs" to "hour", "hours" to "hour",
         "tmrw" to "tomorrow", "tmr" to "tomorrow", "tomorow" to "tomorrow", "tommorow" to "tomorrow", "midday" to "noon",
-        "wk" to "week", "wks" to "week",
+        "wk" to "week", "wks" to "week", "daily" to "day", "weekly" to "week", "monthly" to "month", "yearly" to "year",
+        "annually" to "year", "each" to "every", "weekends" to "weekend", "weekdays" to "weekday",
     )
     private val WEEKDAYS: Map<String, DayOfWeek> = DayOfWeek.entries.flatMap { day ->
         val name = day.name.lowercase()

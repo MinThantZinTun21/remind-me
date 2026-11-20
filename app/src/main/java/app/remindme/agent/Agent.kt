@@ -13,6 +13,7 @@ import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.TemporalAdjusters
 import java.time.format.TextStyle
 import java.util.Locale
 
@@ -104,12 +105,14 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         val title = call.args["title"].orEmpty()
         val details = try {
             val style = style(call.args["style"]) ?: DeliveryStyle.NOTIFICATION
+            val due = due(whenWords(call.args), message, style, keep = null)
+            val repeat = repeat(call.args["repeat"], message, due.toLocalDate())
             TaskDetails(
                 title = title,
-                due = due(whenWords(call.args), message, style, keep = null),
+                due = repeat?.on?.let { due.with(TemporalAdjusters.nextOrSame(it)) } ?: due,
                 style = style,
                 leadTimes = leadTimes(call.args["warn_before"]).orEmpty(),
-                repeat = repeat(call.args) ?: RepeatRule.ONCE,
+                repeat = repeat?.rule ?: if (repeat == null) RepeatRule.ONCE else throw Unreadable(cantRepeat(call.args["repeat"].orEmpty())),
             )
         } catch (unreadable: Unreadable) {
             return ActionCard(call, action, null, unreadable.message, null)
@@ -124,15 +127,14 @@ class Agent(private val tools: Tools, private val clock: Clock) {
     private fun update(call: ToolCall, before: Task, message: String?): ToolResult {
         val args = call.args
         val due = whenWords(args)?.let { due(it, message, style(args["style"]) ?: before.style, keep = before.due) }
-        val newRule = repeat(args)
-        val until = args["repeat_until"]?.let(::day)
+        val repeat = repeat(args["repeat"], message, (due ?: before.due).toLocalDate())
         val asItWas = TaskDetails(before.title, before.due, before.style, before.leadTimes, before.repeat)
         val wanted = asItWas.copy(
             title = args["title"]?.takeIf { it.isNotBlank() } ?: before.title,
-            due = due ?: before.due,
+            due = (due ?: before.due).let { moved -> repeat?.on?.let { moved.with(TemporalAdjusters.nextOrSame(it)) } ?: moved },
             style = style(args["style"]) ?: before.style,
             leadTimes = leadTimes(args["warn_before"]) ?: before.leadTimes,
-            repeat = newRule ?: if (until != null) before.repeat.copy(until = until) else before.repeat,
+            repeat = repeat?.rule ?: repeat?.until?.let { before.repeat.copy(until = it) } ?: before.repeat,
         )
         // The agent sometimes names the right task and then writes back what it already had.
         if (wanted == asItWas) throw Unreadable("The agent's change left \"${before.title}\" exactly as it was.")
@@ -164,16 +166,10 @@ class Agent(private val tools: Tools, private val clock: Clock) {
     /** The moment [words] mean; refused when the app cannot read them or they are not the user's own. */
     private fun due(words: String?, message: String?, style: DeliveryStyle, keep: LocalDateTime?): LocalDateTime {
         val given = words.orEmpty()
-        if (message != null) {
-            val foreign = WordReader.notIn(given, message)
-            if (foreign.isNotEmpty()) throw Unreadable("The words for when, \"$given\", are not all in the message: ${foreign.joinToString(", ")}. Copy the user's own words.")
-        }
+        copied(given, message, "when")
         return WordReader.due(given, clock.now(), style == DeliveryStyle.ALARM, keep)
             ?: throw Unreadable("The app cannot read when \"$given\".")
     }
-
-    private fun day(text: String): LocalDate =
-        runCatching { LocalDate.parse(text.trim().take(10)) }.getOrNull() ?: throw Unreadable("The app cannot read the day \"$text\".")
 
     private fun style(text: String?): DeliveryStyle? = when (text?.trim()?.lowercase()) {
         null, "" -> null
@@ -193,33 +189,24 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         return minutes.filterNotNull().filter { it > 0 }.distinct().map(Duration::ofMinutes)
     }
 
-    /** The repeat rule the call asks for; null when the call says nothing about repeating. */
-    private fun repeat(args: Map<String, String>): RepeatRule? {
-        val kind = args["repeat"]?.trim()?.lowercase() ?: return null
-        val every = args["repeat_every"]?.let { it.trim().toIntOrNull() ?: throw Unreadable("The app cannot read \"every $it\".") } ?: 1
-        val days = weekdays(args["repeat_days"])
-        val until = args["repeat_until"]?.let(::day)
-        return when (kind) {
-            "none", "once", "no" -> RepeatRule.ONCE
-            "daily" -> RepeatRule.everyDays(every, until)
-            // The working week is always Monday to Friday, whatever days the agent writes beside it.
-            "weekdays" -> RepeatRule.weekdays(WORKING_WEEK, until)
-            "weekly" -> when {
-                days.isEmpty() -> RepeatRule.everyWeeks(every, until)
-                every == 1 -> RepeatRule.weekdays(days, until)
-                else -> throw Unreadable("A task cannot repeat every $every weeks on chosen weekdays.")
-            }
-            "monthly" -> RepeatRule.monthly(until)
-            "yearly" -> RepeatRule.yearly(until)
-            else -> throw Unreadable("The app cannot read the repeat rule \"${args["repeat"]}\".")
-        }
+    /**
+     * What the user's words for how the task comes round say, for a task first due on [start]; null when
+     * the call says nothing about repeating. Words the app cannot read are refused, never made a one-time task.
+     */
+    private fun repeat(words: String?, message: String?, start: LocalDate): WordReader.RepeatWords? {
+        val given = words?.trim()?.takeUnless { it.lowercase() in NO_REPEAT } ?: return null
+        copied(given, message, "how it comes round")
+        return WordReader.repeat(given, start, clock.now()) ?: throw Unreadable(cantRepeat(given))
     }
 
-    private fun weekdays(text: String?): Set<DayOfWeek> =
-        text.orEmpty().split(Regex("[^A-Za-z]+")).filter { it.isNotEmpty() }.map { word ->
-            DayOfWeek.entries.firstOrNull { it.name.startsWith(word.take(3).uppercase()) && word.length >= 3 }
-                ?: throw Unreadable("The app cannot read the weekday \"$word\".")
-        }.toSet()
+    private fun cantRepeat(words: String) = "Remind Me can't repeat '$words' yet — set it by hand."
+
+    /** Refuses [words] that are not all the user's own, from [message]. */
+    private fun copied(words: String, message: String?, what: String) {
+        if (message == null) return
+        val foreign = WordReader.notIn(words, message)
+        if (foreign.isNotEmpty()) throw Unreadable("The words for $what, \"$words\", are not all in the message: ${foreign.joinToString(", ")}. Copy the user's own words.")
+    }
 
     /** One task as the agent is shown it: its id, then every property the agent could change. */
     private fun Task.forTheAgent(): String = listOfNotNull(
@@ -246,18 +233,16 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         /** A call named a task the model was not shown. */
         const val NOT_FOUND = "Couldn't find that task."
 
-        private val WORKING_WEEK = setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
         private val NOW = DateTimeFormatter.ofPattern("EEEE yyyy-MM-dd HH:mm", Locale.ENGLISH)
         private val TASK_DUE = DateTimeFormatter.ofPattern("EEE yyyy-MM-dd HH:mm", Locale.ENGLISH)
+        /** What a model writes for a task that does not come round; never the user's words for a repeat. */
+        private val NO_REPEAT = setOf("", "none", "once", "never", "no")
         private val SUMMARY_DUE = DateTimeFormatter.ofPattern("EEE d MMM HH:mm", Locale.ENGLISH)
 
         private const val TASK_PROPERTIES = """
           "title": {"type": "string", "description": "What to do, in a few words."},
           "when": {"type": "string", "description": "The user's own words for when it happens, copied from the message, like next tuesday at 2 pm."},
-          "repeat": {"type": "string", "enum": ["none", "daily", "weekdays", "weekly", "monthly", "yearly"]},
-          "repeat_every": {"type": "integer", "description": "Every how many days or weeks. Leave out for 1."},
-          "repeat_days": {"type": "string", "description": "With weekly, the weekdays it falls on, like mon,wed,fri."},
-          "repeat_until": {"type": "string", "description": "The last day it repeats, as YYYY-MM-DD."},
+          "repeat": {"type": "string", "description": "The user's own words for how it comes round, end included, copied from the message, like every sunday and wednesday. Leave out unless it repeats."},
           "warn_before": {"type": "string", "description": "Early warnings, in minutes before due: one or two numbers, like 30 or 60,1440. 0 for none."},
           "style": {"type": "string", "enum": ["notification", "alarm"]}"""
 
@@ -272,8 +257,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
             "description": "Changes a task from the Tasks list. Give its id and only the properties that change, written as in create_task.",
             "parameters": {"type": "object", "properties": {
               "id": {"type": "integer"}, "title": {"type": "string"}, "when": {"type": "string"},
-              "repeat": {"type": "string"}, "repeat_every": {"type": "integer"}, "repeat_days": {"type": "string"},
-              "repeat_until": {"type": "string"}, "warn_before": {"type": "string"}, "style": {"type": "string"}},
+              "repeat": {"type": "string"}, "warn_before": {"type": "string"}, "style": {"type": "string"}},
               "required": ["id"]}}},
           {"type": "function", "function": {"name": "delete_task",
             "description": "Removes a task from the Tasks list.",
@@ -292,7 +276,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         - One create_task for each thing to be reminded of. Write every call the message needs in this one reply.
         - title is the thing itself in a few words, starting with a capital letter, without "remind me to".
         - when is the user's own words for when it happens, copied from the message as they typed them: "next tuesday at 2 pm", "5 30 tomorrow", "in 20 minutes". Never work out a date or a time yourself; the app does that. Leave when out if the message says nothing about when.
-        - repeat only when the thing comes round again: every day, morning or night is daily; every weekday, every working day or Monday to Friday is weekdays; every Monday is weekly with repeat_days mon; Tuesdays and Thursdays is weekly with repeat_days tue,thu; each month is monthly; birthdays are yearly. when is then the first time it happens.
+        - repeat is the user's own words for how it comes round, end included, copied from the message: "every sunday and wednesday", "weekdays", "every other day", "every monday for 3 weeks", "daily until friday". Leave repeat out unless the message says it comes round again. when is then the first time it happens.
         - warn_before is how long before due the user gets an early warning. Use what the user says ("30 minutes before" is 30). If they do not say, you choose: 0 for waking up and for small things done on the spot, 10 to 60 for things to travel to or get ready for, 1440 for birthdays and deadlines.
         - style is alarm when the user says alarm, wake up, or that they must not miss it. Otherwise leave it out.
         - To change, move, cancel or finish something that is already in Tasks, call update_task, delete_task or complete_task with its id. Do not create it again.
