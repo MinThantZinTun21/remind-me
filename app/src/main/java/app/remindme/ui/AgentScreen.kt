@@ -198,9 +198,15 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onModels: () -> Unit, onCl
             worker.shutdown()
         }
     }
+    // The newest exchange the list has scrolled to: closing a task the user opened keeps their place.
+    var scrolledTo by remember { mutableStateOf<Pair<Int, Boolean>?>(null) }
     LaunchedEffect(exchanges.size, exchanges.lastOrNull()?.finished, editing) {
-        // The list is not drawn while a task is open over it; it scrolls once the screen is back.
-        if (editing == null && exchanges.isNotEmpty()) list.animateScrollToItem(exchanges.size - 1)
+        val newest = exchanges.size to (exchanges.lastOrNull()?.finished == true)
+        // The list is not drawn while a task is open over it; it catches up once the screen is back.
+        if (editing == null && exchanges.isNotEmpty() && newest != scrolledTo) {
+            scrolledTo = newest
+            list.animateScrollToItem(exchanges.size - 1)
+        }
     }
 
     editing?.let { taskId ->
@@ -210,7 +216,13 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onModels: () -> Unit, onCl
             val now = app.tools.list().firstOrNull { it.id == taskId }
             for (card in exchanges.flatMap { it.cards }) {
                 if (card.task?.id == taskId && now != null) card.task = now
-                if (card.listed.any { it.id == taskId }) card.listed = card.listed.mapNotNull { if (it.id == taskId) now else it }
+                // A task moved out of the card's range, or deleted, leaves it; the rest stay soonest first.
+                val range = card.card.range
+                if (range != null && card.listed.any { it.id == taskId }) {
+                    card.listed = card.listed.mapNotNull { if (it.id == taskId) now else it }
+                        .filter { range.holds(it.due) }
+                        .sortedBy { it.due }
+                }
             }
             if (state == ModelState.READY || state == ModelState.LOADING) load()
         }
