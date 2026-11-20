@@ -118,6 +118,46 @@ object WordReader {
         return RepeatWords(rule, until)
     }
 
+    /**
+     * The early warnings [words] ask for, longest first: "30 minutes before", "the day before", "an hour and
+     * a day before". Null when they cannot be read, or ask for more than the two a task can have.
+     */
+    fun warn(words: String): List<Duration>? {
+        val tokens = tokens(words)
+        val found = mutableListOf<Duration>()
+        var i = 0
+        while (i < tokens.size) {
+            val token = tokens[i]
+            val unit = tokens.getOrNull(i + 1)?.let(::warnUnit)
+            when {
+                token == "half" && tokens.getOrNull(i + 1) in setOf("a", "an") && tokens.getOrNull(i + 2)?.let(::warnUnit) == Duration.ofHours(1) -> {
+                    found += Duration.ofMinutes(30); i += 2
+                }
+                amount(token) != null && unit != null -> { found += unit.multipliedBy(amount(token)!!); i++ }
+                amount(token) != null && token.all(Char::isDigit) -> found += Duration.ofMinutes(amount(token)!!)
+                warnUnit(token) != null -> found += warnUnit(token)!!
+                token in WARN_FILLERS -> Unit
+                else -> return null
+            }
+            i++
+        }
+        return found.filter { !it.isZero }.distinct().sortedDescending().takeIf { it.size in 1..2 }
+    }
+
+    private fun warnUnit(token: String): Duration? = when (canonical(token).singleOrNull()) {
+        "minute" -> Duration.ofMinutes(1)
+        "hour" -> Duration.ofHours(1)
+        "day" -> Duration.ofDays(1)
+        "week" -> Duration.ofDays(7)
+        else -> null
+    }
+
+    /** Whether [message] asks for an alarm in so many words: "alarm", "wake", "don't let me miss". */
+    fun asksForAlarm(message: String): Boolean {
+        val text = message.lowercase().replace('’', '\'')
+        return tokens(text).any { it in ALARM_WORDS } || Regex("\\b(don'?t|do not) let me miss\\b").containsMatchIn(text)
+    }
+
     /** The words of [words] that are not in [message]: a sign the model worked something out instead of copying. */
     fun notIn(words: String, message: String): List<String> {
         val given = tokens(message).flatMap(::canonical).toSet()
@@ -348,6 +388,9 @@ object WordReader {
 
     /** Words that carry no meaning of their own in words for how a task comes round. */
     private val REPEAT_FILLERS = setOf("on", "the", "and", "a", "at", "of", "in", "to", "every")
+    /** Words that carry no meaning of their own in words for an early warning. */
+    private val WARN_FILLERS = setOf("before", "early", "earlier", "ahead", "beforehand", "prior", "in", "advance", "the", "and", "to", "it")
+    private val ALARM_WORDS = setOf("alarm", "alarms", "wake", "waking", "woken", "wakes")
     private val TOKEN = Regex("\\d{1,2}[:.]\\d{2}|\\d{1,2}/\\d{1,2}|\\d+(?:st|nd|rd|th)|\\d+|[a-z]+")
     private val CLOCK = Regex("\\d{1,2}[:.]\\d{2}")
     private val SLASH = Regex("\\d{1,2}/\\d{1,2}")

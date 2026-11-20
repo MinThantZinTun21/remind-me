@@ -74,7 +74,7 @@ class AgentTest {
             "create_task",
             "title" to "Dentist",
             "when" to "friday at 3 30 pm",
-            "warn_before" to "60,1440",
+            "warn" to "an hour and a day before",
             "style" to "alarm",
         )
 
@@ -156,8 +156,8 @@ class AgentTest {
     fun `a value the app cannot read is refused and nothing is created`() {
         assertEquals("The app cannot read when \"whenever\".", act("create_task", "title" to "x", "when" to "whenever").refusal)
         assertEquals(
-            "The app cannot read the lead time \"1 hour\".",
-            act("create_task", "title" to "x", "when" to "tomorrow at 9", "warn_before" to "1 hour").refusal,
+            "Remind Me can't read the warning 'the morning of' — set it by hand.",
+            act("create_task", "title" to "x", "when" to "tomorrow at 9", "warn" to "the morning of").refusal,
         )
         assertEquals("The app has no tool called \"send_email\".", act("send_email", "to" to "x").refusal)
         assertEquals(emptyList<Any>(), world.tools.list())
@@ -184,6 +184,48 @@ class AgentTest {
 
         assertEquals(at("2026-11-24T09:00"), next.task!!.due)
         assertEquals(at("2026-11-18T17:30"), half.task!!.due)
+    }
+
+    @Test
+    fun `a warning the user states is copied and read`() {
+        val card = agent.act(
+            listOf(call("create_task", "title" to "Dentist", "when" to "friday at 3 pm", "warn" to "30 minutes before")),
+            message = "dentist friday at 3 pm, remind me 30 minutes before",
+        ).single()
+
+        assertEquals(listOf(Duration.ofMinutes(30)), card.task!!.leadTimes)
+    }
+
+    @Test
+    fun `warning words that are not in the user's message are refused`() {
+        val card = agent.act(
+            listOf(call("create_task", "title" to "Dentist", "when" to "friday at 3 pm", "warn" to "an hour before")),
+            message = "dentist friday at 3 pm",
+        ).single()
+
+        assertEquals("The words for the warning, \"an hour before\", are not all in the message: hour, before. Copy the user's own words.", card.refusal)
+        assertEquals(emptyList<Any>(), world.tools.list())
+    }
+
+    @Test
+    fun `an alarm the message does not ask for becomes a notification`() {
+        val plain = agent.act(listOf(call("create_task", "title" to "Call mom", "when" to "at 9", "style" to "alarm")), message = "call mom at 9").single()
+        val woken = agent.act(listOf(call("create_task", "title" to "Wake up", "when" to "at 7", "style" to "alarm")), message = "wake me at 7").single()
+
+        assertEquals(DeliveryStyle.NOTIFICATION, plain.task!!.style)
+        assertEquals(DeliveryStyle.ALARM, woken.task!!.style)
+    }
+
+    @Test
+    fun `an update to alarm the message does not ask for leaves the style as it was`() {
+        val before = (world.tools.create(TaskDetails("Call mom", at("2026-11-18T09:00"))) as ToolResult.Ok).task
+        val card = agent.act(
+            listOf(call("update_task", "id" to before.id.toString(), "title" to "Call dad", "style" to "alarm")),
+            message = "make it call dad",
+        ).single()
+
+        assertEquals(DeliveryStyle.NOTIFICATION, card.task!!.style)
+        assertEquals("Call dad", card.task!!.title)
     }
 
     @Test
@@ -218,7 +260,7 @@ class AgentTest {
             TaskDetails("Call mom", at("2026-11-18T09:00"), leadTimes = listOf(Duration.ofMinutes(15)), repeat = RepeatRule.daily()),
         ) as ToolResult.Ok).task
 
-        act("update_task", "id" to before.id.toString(), "warn_before" to "0", "repeat" to "until december 31")
+        act("update_task", "id" to before.id.toString(), "warn" to "none", "repeat" to "until december 31")
 
         val after = world.tools.list().single()
         assertEquals(emptyList<Duration>(), after.leadTimes)
@@ -241,7 +283,7 @@ class AgentTest {
         val created = act("create_task", "title" to "Call mom", "when" to "tomorrow at 9", "repeat" to "daily").task!!
         val id = "id" to created.id.toString()
 
-        agent.undo(act("update_task", id, "when" to "tomorrow at 9", "warn_before" to "0", "style" to "alarm"))
+        agent.undo(act("update_task", id, "when" to "tomorrow at 9", "warn" to "none", "style" to "alarm"))
         assertEquals(listOf(created), world.tools.list())
 
         val moved = act("update_task", id, "when" to "thursday at 9")
@@ -316,9 +358,11 @@ class AgentTest {
     }
 
     @Test
-    fun `the agent is told to copy the user's words for how it comes round`() {
+    fun `the agent is told to copy the user's words for how it comes round and for a warning`() {
         assertTrue("repeat is the user's own words for how it comes round, end included" in instruction())
+        assertTrue("warn is the user's own words for an early warning" in instruction())
         assertFalse("repeat_days" in Agent.TOOLS_JSON)
+        assertFalse("warn_before" in Agent.TOOLS_JSON)
     }
 
     @Test

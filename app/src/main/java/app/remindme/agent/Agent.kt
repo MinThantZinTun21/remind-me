@@ -104,14 +104,14 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         val action = ActionCard.Action.CREATE
         val title = call.args["title"].orEmpty()
         val details = try {
-            val style = style(call.args["style"]) ?: DeliveryStyle.NOTIFICATION
+            val style = style(call.args["style"], message) ?: DeliveryStyle.NOTIFICATION
             val due = due(whenWords(call.args), message, style, keep = null)
             val repeat = repeat(call.args["repeat"], message, due.toLocalDate())
             TaskDetails(
                 title = title,
                 due = repeat?.on?.let { due.with(TemporalAdjusters.nextOrSame(it)) } ?: due,
                 style = style,
-                leadTimes = leadTimes(call.args["warn_before"]).orEmpty(),
+                leadTimes = warn(warnWords(call.args), message).orEmpty(),
                 repeat = repeat?.rule ?: if (repeat == null) RepeatRule.ONCE else throw Unreadable(cantRepeat(call.args["repeat"].orEmpty())),
             )
         } catch (unreadable: Unreadable) {
@@ -126,14 +126,15 @@ class Agent(private val tools: Tools, private val clock: Clock) {
     /** Only what the call gives changes; everything else stays as the task has it. */
     private fun update(call: ToolCall, before: Task, message: String?): ToolResult {
         val args = call.args
-        val due = whenWords(args)?.let { due(it, message, style(args["style"]) ?: before.style, keep = before.due) }
+        val style = style(args["style"], message) ?: before.style
+        val due = whenWords(args)?.let { due(it, message, style, keep = before.due) }
         val repeat = repeat(args["repeat"], message, (due ?: before.due).toLocalDate())
         val asItWas = TaskDetails(before.title, before.due, before.style, before.leadTimes, before.repeat)
         val wanted = asItWas.copy(
             title = args["title"]?.takeIf { it.isNotBlank() } ?: before.title,
             due = (due ?: before.due).let { moved -> repeat?.on?.let { moved.with(TemporalAdjusters.nextOrSame(it)) } ?: moved },
-            style = style(args["style"]) ?: before.style,
-            leadTimes = leadTimes(args["warn_before"]) ?: before.leadTimes,
+            style = style,
+            leadTimes = warn(warnWords(args), message) ?: before.leadTimes,
             repeat = repeat?.rule ?: repeat?.until?.let { before.repeat.copy(until = it) } ?: before.repeat,
         )
         // The agent sometimes names the right task and then writes back what it already had.
@@ -171,22 +172,23 @@ class Agent(private val tools: Tools, private val clock: Clock) {
             ?: throw Unreadable("The app cannot read when \"$given\".")
     }
 
-    private fun style(text: String?): DeliveryStyle? = when (text?.trim()?.lowercase()) {
+    /** The style the call asks for; an alarm the user's [message] does not ask for in so many words is dropped. */
+    private fun style(text: String?, message: String?): DeliveryStyle? = when (text?.trim()?.lowercase()) {
         null, "" -> null
         "notification" -> DeliveryStyle.NOTIFICATION
-        "alarm" -> DeliveryStyle.ALARM
+        "alarm" -> DeliveryStyle.ALARM.takeIf { message == null || WordReader.asksForAlarm(message) }
         else -> throw Unreadable("The app cannot read the delivery style \"$text\".")
     }
 
-    /** Minutes before the due time, one or two numbers; "0" or "none" for no early warning. Null when not given. */
-    private fun leadTimes(text: String?): List<Duration>? {
-        val given = text?.trim()?.lowercase() ?: return null
-        if (given in setOf("", "none", "0", "[]")) return emptyList()
-        val minutes = given.split(Regex("[^0-9]+")).filter { it.isNotEmpty() }.map { it.toLongOrNull() }
-        if (minutes.isEmpty() || minutes.any { it == null } || given.any { it.isLetter() }) {
-            throw Unreadable("The app cannot read the lead time \"$text\".")
-        }
-        return minutes.filterNotNull().filter { it > 0 }.distinct().map(Duration::ofMinutes)
+    /** The user's words for an early warning; `warn_before` is what the first tool contract called it. */
+    private fun warnWords(args: Map<String, String>): String? = args["warn"] ?: args["warn_before"]
+
+    /** The early warnings the user's words ask for; null when the call says nothing about one, empty for none. */
+    private fun warn(words: String?, message: String?): List<Duration>? {
+        val given = words?.trim() ?: return null
+        if (given.lowercase() in NO_WARNING) return emptyList()
+        copied(given, message, "the warning")
+        return WordReader.warn(given) ?: throw Unreadable("Remind Me can't read the warning '$given' — set it by hand.")
     }
 
     /**
@@ -237,13 +239,15 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         private val TASK_DUE = DateTimeFormatter.ofPattern("EEE yyyy-MM-dd HH:mm", Locale.ENGLISH)
         /** What a model writes for a task that does not come round; never the user's words for a repeat. */
         private val NO_REPEAT = setOf("", "none", "once", "never", "no")
+        /** What a model writes to take an early warning away. */
+        private val NO_WARNING = setOf("", "none", "0", "no", "never", "[]")
         private val SUMMARY_DUE = DateTimeFormatter.ofPattern("EEE d MMM HH:mm", Locale.ENGLISH)
 
         private const val TASK_PROPERTIES = """
           "title": {"type": "string", "description": "What to do, in a few words."},
           "when": {"type": "string", "description": "The user's own words for when it happens, copied from the message, like next tuesday at 2 pm."},
           "repeat": {"type": "string", "description": "The user's own words for how it comes round, end included, copied from the message, like every sunday and wednesday. Leave out unless it repeats."},
-          "warn_before": {"type": "string", "description": "Early warnings, in minutes before due: one or two numbers, like 30 or 60,1440. 0 for none."},
+          "warn": {"type": "string", "description": "The user's own words for an early warning, copied from the message, like 30 minutes before. Leave out unless the user asks for one; none takes it away."},
           "style": {"type": "string", "enum": ["notification", "alarm"]}"""
 
         /** The tools the agent can call, in the JSON form the model's chat template writes into its prompt. */
@@ -257,7 +261,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
             "description": "Changes a task from the Tasks list. Give its id and only the properties that change, written as in create_task.",
             "parameters": {"type": "object", "properties": {
               "id": {"type": "integer"}, "title": {"type": "string"}, "when": {"type": "string"},
-              "repeat": {"type": "string"}, "warn_before": {"type": "string"}, "style": {"type": "string"}},
+              "repeat": {"type": "string"}, "warn": {"type": "string"}, "style": {"type": "string"}},
               "required": ["id"]}}},
           {"type": "function", "function": {"name": "delete_task",
             "description": "Removes a task from the Tasks list.",
@@ -269,7 +273,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         """.trimIndent()
 
         private val SYSTEM = """
-        You are the tool-calling part of Remind Me, a reminders and alarms app on the user's phone. Whatever the user types is something they want set, changed or removed. You never talk to the user and never ask a question: your whole reply is tool calls and nothing else. You decide every detail of a task yourself.
+        You are the tool-calling part of Remind Me, a reminders and alarms app on the user's phone. Whatever the user types is something they want set, changed or removed. You never talk to the user and never ask a question: your whole reply is tool calls and nothing else. You copy the user's own words into the calls; the app reads them.
 
         Rules:
         - Read the message for what the user wants, not for its wording. A statement is a request: "I wake up every morning at 8" is an alarm titled "Wake up", daily at 08:00; "meeting with the bank Friday 3pm" is a reminder for that meeting; "dentist tomorrow" is a reminder tomorrow.
@@ -277,8 +281,8 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         - title is the thing itself in a few words, starting with a capital letter, without "remind me to".
         - when is the user's own words for when it happens, copied from the message as they typed them: "next tuesday at 2 pm", "5 30 tomorrow", "in 20 minutes". Never work out a date or a time yourself; the app does that. Leave when out if the message says nothing about when.
         - repeat is the user's own words for how it comes round, end included, copied from the message: "every sunday and wednesday", "weekdays", "every other day", "every monday for 3 weeks", "daily until friday". Leave repeat out unless the message says it comes round again. when is then the first time it happens.
-        - warn_before is how long before due the user gets an early warning. Use what the user says ("30 minutes before" is 30). If they do not say, you choose: 0 for waking up and for small things done on the spot, 10 to 60 for things to travel to or get ready for, 1440 for birthdays and deadlines.
-        - style is alarm when the user says alarm, wake up, or that they must not miss it. Otherwise leave it out.
+        - warn is the user's own words for an early warning, copied from the message: "30 minutes before", "the day before", "an hour and a day before". Leave warn out unless the user asks for an early warning; never choose one yourself.
+        - style is alarm only when the user says alarm, wake, wake me, or don't let me miss it. Otherwise leave it out.
         - To change, move, cancel or finish something that is already in Tasks, call update_task, delete_task or complete_task with its id. Do not create it again.
         - If the message names nothing that could be a reminder, reply with the one word NONE.
         - The tasks and the conversation so far come after these rules. "it" and "that" mean the task the conversation was last about.

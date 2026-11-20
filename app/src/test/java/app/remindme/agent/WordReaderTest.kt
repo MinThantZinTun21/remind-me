@@ -9,10 +9,13 @@ import java.time.DayOfWeek.SUNDAY
 import java.time.DayOfWeek.THURSDAY
 import java.time.DayOfWeek.TUESDAY
 import java.time.DayOfWeek.WEDNESDAY
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Ticket 03's table. Wednesday 18 November 2026, 09:15, unless a test says otherwise. */
@@ -252,5 +255,35 @@ class WordReaderTest {
         assertEquals(RepeatRule.ONCE, rule("once"))
         assertNull(WordReader.repeat("every full moon", now.toLocalDate(), now))
         assertNull(WordReader.repeat("every other monday and friday", now.toLocalDate(), now))
+    }
+
+    @Test
+    fun `a stated warning is read, one or two of them, the longest first`() {
+        assertEquals(listOf(Duration.ofMinutes(30)), WordReader.warn("30 minutes before"))
+        assertEquals(listOf(Duration.ofDays(1)), WordReader.warn("the day before"))
+        assertEquals(listOf(Duration.ofDays(1), Duration.ofHours(1)), WordReader.warn("an hour and a day before"))
+        assertEquals(listOf(Duration.ofMinutes(30)), WordReader.warn("half an hour before"))
+        assertEquals(listOf(Duration.ofHours(2)), WordReader.warn("2 hours early"))
+        assertEquals(listOf(Duration.ofMinutes(15)), WordReader.warn("15 min"))
+        assertEquals(listOf(Duration.ofDays(7)), WordReader.warn("a week before"))
+        assertEquals(listOf(Duration.ofDays(1), Duration.ofMinutes(10)), WordReader.warn("10 mins, 1 day before"))
+    }
+
+    @Test
+    fun `warnings it cannot read, or more than two, are not read`() {
+        assertNull(WordReader.warn("the morning of"))
+        assertNull(WordReader.warn("10 minutes, an hour and a day before"))
+        assertNull(WordReader.warn("before"))
+    }
+
+    @Test
+    fun `an alarm is asked for only in so many words`() {
+        assertTrue(WordReader.asksForAlarm("set an alarm for 6"))
+        assertTrue(WordReader.asksForAlarm("wake me at 7"))
+        assertTrue(WordReader.asksForAlarm("I need to wake up at 6"))
+        assertTrue(WordReader.asksForAlarm("flight at 9, don't let me miss it"))
+        assertTrue(WordReader.asksForAlarm("dont let me miss the bus"))
+        assertFalse(WordReader.asksForAlarm("call mom at 9"))
+        assertFalse(WordReader.asksForAlarm("important meeting at 3"))
     }
 }
