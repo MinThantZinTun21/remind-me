@@ -52,6 +52,8 @@ data class ContextRecord(
     val written: Int,
     /** The reply exactly as the model wrote it. */
     val output: String,
+    /** What did not fit, "2 earlier exchanges, 6 tasks"; null when everything did. */
+    val leftOut: String? = null,
 )
 
 /** One message the owner sent and what came of it. See GLOSSARY.md. */
@@ -77,15 +79,51 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     /** Cards the owner took back during this visit. */
     private val undone: MutableSet<ActionCard> = Collections.synchronizedSet(Collections.newSetFromMap(IdentityHashMap()))
 
-    /** What the model reads before the next message. */
-    fun preface(): Preface = prefaceOf(prefaceParts())
+    /** What the model reads before the next message, for a message of usual length. */
+    fun preface(): Preface = prefaceOf(fit("").parts)
 
-    private fun prefaceParts(): List<ContextPart> = listOfNotNull(
-        part("Instruction", agent.rules()),
-        part("Tools", Agent.TOOLS_JSON),
-        part("Tasks", agent.taskList(tools.list().take(MAX_TASKS))),
-        conversation().takeIf { it.isNotEmpty() }?.let { part("Conversation", "Conversation so far:\n$it") },
-    )
+    /** The context parts before the message, cut to fit beside it, and what was left out. */
+    private class Fit(val parts: List<ContextPart>, val shown: Set<Long>, val leftOut: String?)
+
+    /**
+     * Fits the context to the model: the instruction, the tools and the message are never cut; earlier
+     * exchanges are left out oldest first, then tasks not touched in this conversation, latest due first.
+     */
+    private fun fit(message: String): Fit {
+        val budget = model.contextTokens - MAX_OUTPUT_TOKENS - maxOf(estimate(message), MESSAGE_ALLOWANCE)
+        val fixed = estimate(agent.rules()) + estimate(Agent.TOOLS_JSON)
+        val touched = touched()
+        var exchanges = history.toList()
+        var tasks = tools.list()
+        val allTasks = tasks.size
+        fun conversation() = conversationOf(exchanges).takeIf { it.isNotEmpty() }?.let { "Conversation so far:\n$it" }
+        fun size() = fixed + estimate(agent.taskList(tasks)) + (conversation()?.let(::estimate) ?: 0)
+        while (size() > budget && exchanges.isNotEmpty()) exchanges = exchanges.drop(1)
+        while (size() > budget) {
+            val leaving = tasks.lastOrNull { it.id !in touched } ?: break
+            tasks = tasks - leaving
+        }
+        val parts = listOfNotNull(
+            part("Instruction", agent.rules()),
+            part("Tools", Agent.TOOLS_JSON),
+            part("Tasks", agent.taskList(tasks)),
+            conversation()?.let { part("Conversation", it) },
+        )
+        val leftOut = listOfNotNull(
+            counted(history.size - exchanges.size, "earlier exchange", "earlier exchanges"),
+            counted(allTasks - tasks.size, "task", "tasks"),
+        ).joinToString(", ").ifEmpty { null }
+        return Fit(parts, tasks.map { it.id }.toSet(), leftOut)
+    }
+
+    /** The tasks this conversation created, changed or showed: they stay in the task list whatever else is cut. */
+    private fun touched(): Set<Long> = history.flatMap { it.cards }.mapNotNull { it.task?.id }.toSet()
+
+    private fun counted(n: Int, one: String, many: String) = when (n) {
+        0 -> null
+        1 -> "1 $one"
+        else -> "$n $many"
+    }
 
     private fun prefaceOf(parts: List<ContextPart>) = Preface(
         instruction = parts.filter { it.name in INSTRUCTION_PARTS }.joinToString("\n\n") { it.text },
@@ -98,24 +136,25 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     /** Sends the owner's [words] and returns what came of them. Blocks until the model has replied. */
     fun send(words: String, onText: (String) -> Unit = {}): Exchange {
         val message = agent.userMessage(words)
-        val parts = prefaceParts() + part("Message", message)
+        val fit = fit(message)
+        val parts = fit.parts + part("Message", message)
         val exchange = try {
-            model.open(prefaceOf(parts)).use { talk ->
+            model.open(prefaceOf(fit.parts)).use { talk ->
                 val reply = talk.say(message, onText)
                 val parsed = ReplyParser.parse(reply.text)
-                val cards = agent.act(parsed.calls)
-                Exchange(words, cards, parsed.problem ?: NOTHING_TO_DO.takeIf { cards.isEmpty() }, reply, record(parts, reply))
+                val cards = agent.act(parsed.calls, fit.shown)
+                Exchange(words, cards, parsed.problem ?: NOTHING_TO_DO.takeIf { cards.isEmpty() }, reply, record(parts, reply, fit.leftOut))
             }
         } catch (failure: Exception) {
-            Exchange(words, emptyList(), "The model stopped: ${failure.message}", null, record(parts, null))
+            Exchange(words, emptyList(), "The model stopped: ${failure.message}", null, record(parts, null, fit.leftOut))
         }
         history += exchange
         return exchange
     }
 
-    private fun record(parts: List<ContextPart>, reply: ModelReply?): ContextRecord {
+    private fun record(parts: List<ContextPart>, reply: ModelReply?, leftOut: String?): ContextRecord {
         val read = reply?.tokensInContext?.takeIf { it >= 0 }?.let { it - reply.tokensWritten } ?: -1
-        return ContextRecord(scaled(parts, read), read, model.contextTokens, reply?.tokensWritten ?: 0, reply?.text.orEmpty())
+        return ContextRecord(scaled(parts, read), read, model.contextTokens, reply?.tokensWritten ?: 0, reply?.text.orEmpty(), leftOut)
     }
 
     /** The estimated part sizes, scaled so that they add up to the [read] the runtime counted. */
@@ -128,7 +167,9 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         return parts.mapIndexed { i, part -> part.copy(tokens = sizes[i]) }
     }
 
-    private fun part(name: String, text: String) = ContextPart(name, text, (text.length + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN)
+    private fun part(name: String, text: String) = ContextPart(name, text, estimate(text))
+
+    private fun estimate(text: String) = (text.length + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
 
     /** Takes back what [card] reports, and tells the model so with the next message. */
     fun undo(card: ActionCard) = agent.undo(card).also { undone += card }
@@ -140,11 +181,13 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     }
 
     /** The conversation so far, a line for the owner's words and one for each card. */
-    fun conversation(): String {
+    fun conversation(): String = conversationOf(history)
+
+    private fun conversationOf(exchanges: List<Exchange>): String {
         // Only the newest card on a task can have been overtaken by the owner's own change since.
         val newest: MutableSet<ActionCard> = Collections.newSetFromMap(IdentityHashMap())
         history.flatMap { it.cards }.filter { it.went && it.task != null }.associateBy { it.task!!.id }.values.forEach { newest += it }
-        return history.joinToString("\n") { exchange -> lines(exchange, newest) }
+        return exchanges.joinToString("\n") { exchange -> lines(exchange, newest) }
     }
 
     private fun lines(exchange: Exchange, newest: Set<ActionCard>): String {
@@ -187,8 +230,11 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     companion object {
         const val NOTHING_TO_DO = "The agent found nothing to remind you of in that. Say what it is and when."
 
-        /** More tasks than this do not fit beside the rules in the model's small context. */
-        private const val MAX_TASKS = 15
+        /** What the model may write, kept free in its context. Matches the engine's output limit. */
+        const val MAX_OUTPUT_TOKENS = 320
+
+        /** Room kept for the message when the context is fitted before the owner has typed it. */
+        private const val MESSAGE_ALLOWANCE = 64
 
         /** About how many characters make a token, for sizing the parts of the context. */
         private const val CHARS_PER_TOKEN = 4

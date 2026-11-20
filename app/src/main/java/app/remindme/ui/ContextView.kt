@@ -53,6 +53,9 @@ fun ContextView(record: ContextRecord) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Heading("Input")
             for (part in record.parts) Block(part.name, "≈ ${count(part.tokens)}", part.text)
+            record.leftOut?.let {
+                Text("Left out: $it", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp))
+            }
             Heading("Output")
             Block("Reply", "${count(record.written)} written", record.output.ifEmpty { "(no reply)" })
         }

@@ -2,6 +2,7 @@ package app.remindme.agent
 
 import app.remindme.core.DayButtons
 import app.remindme.core.TaskDetails
+import app.remindme.core.ToolResult
 import app.remindme.core.World
 import app.remindme.core.at
 import java.time.DayOfWeek
@@ -75,7 +76,7 @@ class OrchestratorTest {
         orchestrator.send("hmm")
 
         val conversation = orchestrator.conversation()
-        assertTrue(conversation, "Remind Me: could not delete: There is no task with id \"9\" on the list." in conversation)
+        assertTrue(conversation, "Remind Me: could not delete: Couldn't find that task." in conversation)
         assertTrue(conversation, "User: hmm\nRemind Me: nothing to remind you of" in conversation)
     }
 
@@ -135,6 +136,88 @@ class OrchestratorTest {
         orchestrator.send("change it to 7")
 
         assertFalse(orchestrator.conversation(), "you changed it" in orchestrator.conversation())
+    }
+
+    private fun estimate(text: String) = (text.length + 3) / 4
+
+    /** The context size that leaves exactly [fits] for the conversation and tasks, after the reply and a short message. */
+    private fun contextFor(fits: Int): Int {
+        val agent = Agent(world.tools, world.clock)
+        return 320 + 64 + estimate(agent.rules()) + estimate(Agent.TOOLS_JSON) + fits
+    }
+
+    private fun task(title: String, due: String) =
+        (world.tools.create(TaskDetails(title, at(due))) as ToolResult.Ok).task
+
+    @Test
+    fun `the oldest exchanges are left out first`() {
+        for (words in listOf("first message", "second message", "third message")) {
+            model.replies += "NONE"
+            orchestrator.send(words)
+        }
+        val agent = Agent(world.tools, world.clock)
+        model.contextTokens = contextFor(estimate(agent.taskList(emptyList())) + estimate("Conversation so far:\nUser: third message\nRemind Me: nothing to remind you of"))
+        model.replies += "NONE"
+
+        val record = orchestrator.send("fourth").context
+
+        val conversation = record.parts.single { it.name == "Conversation" }.text
+        assertEquals("Conversation so far:\nUser: third message\nRemind Me: nothing to remind you of", conversation)
+        assertEquals("2 earlier exchanges", record.leftOut)
+    }
+
+    @Test
+    fun `then the task list shrinks, keeping touched tasks and then the soonest due`() {
+        val a = task("Alpha", "2026-11-18T09:00")
+        task("Bravo", "2026-11-19T09:00")
+        task("Charlie", "2026-11-20T09:00")
+        val d = task("Delta", "2026-11-21T09:00")
+        model.replies += reply(call("update_task", "id" to "${d.id}", "title" to "Delta two"))
+        orchestrator.send("rename delta")
+        val agent = Agent(world.tools, world.clock)
+        val kept = world.tools.list().filter { it.id in setOf(a.id, d.id) }
+        model.contextTokens = contextFor(estimate(agent.taskList(kept)))
+        model.replies += "NONE"
+
+        val record = orchestrator.send("ok")
+
+        assertEquals(agent.taskList(kept), record.context.parts.single { it.name == "Tasks" }.text)
+        assertEquals("1 earlier exchange, 2 tasks", record.context.leftOut)
+    }
+
+    @Test
+    fun `the instruction, the tools and the message are never cut`() {
+        task("Alpha", "2026-11-18T09:00")
+        model.contextTokens = 100
+        model.replies += "NONE"
+
+        val record = orchestrator.send("hello").context
+
+        assertEquals(Agent(world.tools, world.clock).rules(), record.parts.single { it.name == "Instruction" }.text)
+        assertEquals(Agent.TOOLS_JSON, record.parts.single { it.name == "Tools" }.text)
+        assertEquals("Now: Tuesday 2026-11-17 10:00\nhello", record.parts.last().text)
+        assertEquals("1 task", record.leftOut)
+    }
+
+    @Test
+    fun `nothing is named as left out when everything fits`() {
+        task("Alpha", "2026-11-18T09:00")
+        model.replies += "NONE"
+
+        assertEquals(null, orchestrator.send("hello").context.leftOut)
+    }
+
+    @Test
+    fun `a call on a task the model could not see is refused`() {
+        task("Alpha", "2026-11-18T09:00")
+        val hidden = task("Bravo", "2026-11-19T09:00")
+        model.contextTokens = contextFor(estimate(Agent(world.tools, world.clock).taskList(world.tools.list().take(1))))
+        model.replies += reply(call("delete_task", "id" to "${hidden.id}"))
+
+        val card = orchestrator.send("delete bravo").cards.single()
+
+        assertEquals("Couldn't find that task.", card.refusal)
+        assertEquals(2, world.tools.list().size)
     }
 
     @Test
@@ -198,7 +281,7 @@ class OrchestratorTest {
 }
 
 /** A model that answers from a script and remembers what it was given. */
-class FakeModel(override val contextTokens: Int = 4096) : ModelPort {
+class FakeModel(override var contextTokens: Int = 4096) : ModelPort {
     val replies = ArrayDeque<String>()
     val prefaces = mutableListOf<Preface>()
     val said = mutableListOf<String>()

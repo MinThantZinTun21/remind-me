@@ -149,7 +149,7 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
         private const val TAG = "RemindMeAgent"
 
         /** Room for about three tool calls and a sentence. */
-        private const val MAX_OUTPUT_TOKENS = 320
+        private const val MAX_OUTPUT_TOKENS = Orchestrator.MAX_OUTPUT_TOKENS
         private const val REPLY_TIMEOUT_S = 240L
         private const val STOP_TIMEOUT_S = 10L
 

@@ -84,8 +84,16 @@ class Agent(private val tools: Tools, private val clock: Clock) {
     /** The user's text as the model gets it: the time now, then the text. */
     fun userMessage(text: String): String = "Now: ${clock.now().format(NOW)}\n$text"
 
-    /** Runs every call, in order, and reports each on an action card. */
-    fun act(calls: List<ToolCall>): List<ActionCard> = calls.map(::act)
+    /**
+     * Runs every call, in order, and reports each on an action card. With [shown], a call may only name a
+     * task the model was shown, or one it created in this reply.
+     */
+    fun act(calls: List<ToolCall>, shown: Set<Long>? = null): List<ActionCard> {
+        val visible = shown?.toMutableSet()
+        return calls.map { call ->
+            act(call, visible).also { card -> if (card.action == ActionCard.Action.CREATE) card.task?.let { visible?.add(it.id) } }
+        }
+    }
 
     /** Takes back what a card reports. */
     fun undo(card: ActionCard): ToolResult? = when (val undo = card.undo) {
@@ -94,11 +102,11 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         null -> null
     }
 
-    private fun act(call: ToolCall): ActionCard = when (call.name) {
+    private fun act(call: ToolCall, visible: Set<Long>?): ActionCard = when (call.name) {
         "create_task" -> create(call)
-        "update_task" -> onExisting(call, ActionCard.Action.UPDATE) { before -> update(call, before) }
-        "delete_task" -> onExisting(call, ActionCard.Action.DELETE) { before -> tools.delete(before.id) }
-        "complete_task" -> onExisting(call, ActionCard.Action.COMPLETE) { before -> tools.done(before.id) }
+        "update_task" -> onExisting(call, visible, ActionCard.Action.UPDATE) { before -> update(call, before) }
+        "delete_task" -> onExisting(call, visible, ActionCard.Action.DELETE) { before -> tools.delete(before.id) }
+        "complete_task" -> onExisting(call, visible, ActionCard.Action.COMPLETE) { before -> tools.done(before.id) }
         else -> ActionCard(call, ActionCard.Action.UNKNOWN, null, "The app has no tool called \"${call.name}\".", null)
     }
 
@@ -143,9 +151,11 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         return tools.update(before.id, wanted)
     }
 
-    private fun onExisting(call: ToolCall, action: ActionCard.Action, change: (Task) -> ToolResult): ActionCard {
+    private fun onExisting(call: ToolCall, visible: Set<Long>?, action: ActionCard.Action, change: (Task) -> ToolResult): ActionCard {
         val idText = call.args["id"].orEmpty()
-        val before = idText.trim().toLongOrNull()?.let { id -> tools.list().firstOrNull { it.id == id } }
+        val id = idText.trim().toLongOrNull()
+        if (visible != null && id !in visible) return ActionCard(call, action, null, NOT_FOUND, null)
+        val before = id?.let { tools.list().firstOrNull { it.id == id } }
             ?: return ActionCard(call, action, null, "There is no task with id \"$idText\" on the list.", null)
         val result = try {
             change(before)
@@ -239,6 +249,9 @@ class Agent(private val tools: Tools, private val clock: Clock) {
     }
 
     companion object {
+        /** A call named a task the model was not shown. */
+        const val NOT_FOUND = "Couldn't find that task."
+
         /** Enough days to look up "next Friday" instead of counting to it. */
         private const val COMING_DAYS = 14
 
