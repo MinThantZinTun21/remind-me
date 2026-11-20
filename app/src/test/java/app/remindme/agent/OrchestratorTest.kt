@@ -70,7 +70,7 @@ class OrchestratorTest {
 
     @Test
     fun `a refused call and a reply with nothing to do both leave a line`() {
-        model.replies += reply(call("delete_task", "id" to "9"))
+        repeat(2) { model.replies += reply(call("delete_task", "id" to "9")) }
         orchestrator.send("delete the dentist")
         model.replies += "NONE"
         orchestrator.send("hmm")
@@ -212,7 +212,7 @@ class OrchestratorTest {
         task("Alpha", "2026-11-18T09:00")
         val hidden = task("Bravo", "2026-11-19T09:00")
         model.contextTokens = contextFor(estimate(Agent(world.tools, world.clock).taskList(world.tools.list().take(1))))
-        model.replies += reply(call("delete_task", "id" to "${hidden.id}"))
+        repeat(2) { model.replies += reply(call("delete_task", "id" to "${hidden.id}")) }
 
         val card = orchestrator.send("delete bravo").cards.single()
 
@@ -265,6 +265,74 @@ class OrchestratorTest {
 
         assertTrue("Conversation so far:" in model.prepared.single().instruction)
         assertEquals(model.prepared.single(), model.prefaces.last())
+    }
+
+    @Test
+    fun `a garbled reply is asked for once more in the same talk, giving the reason`() {
+        model.replies += "<tool_call><function=create_task><parameter=title>Call mom"
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+
+        val exchange = orchestrator.send("call mom thursday at 9")
+
+        assertEquals(2, model.said.size)
+        assertEquals(1, model.opened)
+        assertTrue(model.said[1], "The agent's reply stopped in the middle of a tool call." in model.said[1])
+        assertTrue(exchange.cards.single().went)
+        assertEquals(null, exchange.problem)
+        val retry = exchange.context.retry!!
+        assertEquals(model.said[1], retry.reason)
+        assertEquals(reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00")), retry.output)
+        assertEquals("<tool_call><function=create_task><parameter=title>Call mom", exchange.context.output)
+    }
+
+    @Test
+    fun `words instead of calls, and calls that all fail, are unusable`() {
+        model.replies += "Sure, I will remind you."
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "thursday"))
+
+        val exchange = orchestrator.send("call mom thursday at 9")
+
+        assertEquals(2, model.said.size)
+        assertTrue(model.said[1], "no tool call" in model.said[1])
+        assertFalse(exchange.cards.single().went)
+        assertEquals("The app cannot read the due time \"thursday\".", exchange.cards.single().refusal)
+        assertTrue(world.tools.list().isEmpty())
+    }
+
+    @Test
+    fun `there is only one second attempt`() {
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "thursday"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "thursday 9"))
+
+        val exchange = orchestrator.send("call mom thursday at 9")
+
+        assertEquals(2, model.said.size)
+        assertTrue(model.said[1], "The app cannot read the due time \"thursday\"." in model.said[1])
+        assertEquals("The app cannot read the due time \"thursday 9\".", exchange.cards.single().refusal)
+    }
+
+    @Test
+    fun `a reply with a usable call is not asked again, and its working calls keep their cards`() {
+        model.replies += reply(
+            call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"),
+            call("create_task", "title" to "Dentist", "due" to "friday"),
+        )
+
+        val exchange = orchestrator.send("call mom thursday at 9 and dentist friday")
+
+        assertEquals(1, model.said.size)
+        assertEquals(listOf(true, false), exchange.cards.map { it.went })
+        assertEquals(null, exchange.context.retry)
+    }
+
+    @Test
+    fun `NONE is not asked again`() {
+        model.replies += "NONE"
+
+        val exchange = orchestrator.send("hello")
+
+        assertEquals(1, model.said.size)
+        assertTrue(exchange.problem!!.startsWith("Nothing to remind you of"))
     }
 
     @Test

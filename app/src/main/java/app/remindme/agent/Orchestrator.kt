@@ -54,7 +54,12 @@ data class ContextRecord(
     val output: String,
     /** What did not fit, "2 earlier exchanges, 6 tasks"; null when everything did. */
     val leftOut: String? = null,
+    /** The second attempt, when the first reply was unusable; null when there was none. */
+    val retry: Retry? = null,
 )
+
+/** The second attempt: what the app told the model, and what the model wrote back. */
+data class Retry(val reason: String, val output: String)
 
 /** One message the owner sent and what came of it. See GLOSSARY.md. */
 data class Exchange(
@@ -140,16 +145,55 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         val parts = fit.parts + part("Message", message)
         val exchange = try {
             model.open(prefaceOf(fit.parts)).use { talk ->
-                val reply = talk.say(message, onText)
-                val parsed = ReplyParser.parse(reply.text)
-                val cards = agent.act(parsed.calls, fit.shown)
-                Exchange(words, cards, parsed.problem ?: NOTHING_TO_DO.takeIf { cards.isEmpty() }, reply, record(parts, reply, fit.leftOut))
+                val first = attempt(talk, message, fit.shown, onText)
+                val reason = unusable(first)
+                if (reason == null) {
+                    exchangeOf(words, first, record(parts, first.reply, fit.leftOut))
+                } else {
+                    // Once more in the same talk: the model has the context and its own reply already.
+                    val second = attempt(talk, reason, fit.shown, onText)
+                    val kept = if (second.cards.isNotEmpty() || first.cards.isEmpty()) second else first
+                    val record = record(parts, first.reply, fit.leftOut).let {
+                        it.copy(written = it.written + second.reply.tokensWritten, retry = Retry(reason, second.reply.text))
+                    }
+                    exchangeOf(words, kept, record).copy(reply = second.reply)
+                }
             }
         } catch (failure: Exception) {
             Exchange(words, emptyList(), "The model stopped: ${failure.message}", null, record(parts, null, fit.leftOut))
         }
         history += exchange
         return exchange
+    }
+
+    /** One reply and what the app made of it. */
+    private class Attempt(val reply: ModelReply, val parsed: ParsedReply, val cards: List<ActionCard>) {
+        val none: Boolean get() = parsed.calls.isEmpty() && parsed.problem == null && parsed.answer.trim().trimEnd('.').equals("NONE", ignoreCase = true)
+    }
+
+    private fun attempt(talk: Talk, text: String, shown: Set<Long>, onText: (String) -> Unit): Attempt {
+        val reply = talk.say(text, onText)
+        val parsed = ReplyParser.parse(reply.text)
+        return Attempt(reply, parsed, agent.act(parsed.calls, shown))
+    }
+
+    /** Why nothing in the reply could be used, told to the model for its second attempt; null when something could, or it said NONE. */
+    private fun unusable(attempt: Attempt): String? {
+        if (attempt.none || attempt.cards.any { it.went }) return null
+        val reasons = listOfNotNull(
+            attempt.parsed.problem,
+            NO_CALL.takeIf { attempt.parsed.calls.isEmpty() && attempt.parsed.problem == null },
+        ) + attempt.cards.mapNotNull { it.refusal }
+        return "Nothing in your reply could be used. " + reasons.joinToString(" ") + " Write the tool calls again, in the same form."
+    }
+
+    private fun exchangeOf(words: String, attempt: Attempt, record: ContextRecord): Exchange {
+        val problem = attempt.parsed.problem ?: when {
+            attempt.cards.isNotEmpty() -> null
+            attempt.none -> NOTHING_TO_DO
+            else -> NO_USABLE_CALL
+        }
+        return Exchange(words, attempt.cards, problem, attempt.reply, record)
     }
 
     private fun record(parts: List<ContextPart>, reply: ModelReply?, leftOut: String?): ContextRecord {
@@ -228,7 +272,9 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     }
 
     companion object {
-        const val NOTHING_TO_DO = "The agent found nothing to remind you of in that. Say what it is and when."
+        const val NOTHING_TO_DO = "Nothing to remind you of in that. Say what it is and when."
+        private const val NO_USABLE_CALL = "The agent wrote nothing the app could use. Try saying it another way."
+        private const val NO_CALL = "Your reply had no tool call."
 
         /** What the model may write, kept free in its context. Matches the engine's output limit. */
         const val MAX_OUTPUT_TOKENS = 320

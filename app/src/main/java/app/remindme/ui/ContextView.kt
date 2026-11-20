@@ -57,7 +57,11 @@ fun ContextView(record: ContextRecord) {
                 Text("Left out: $it", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp))
             }
             Heading("Output")
-            Block("Reply", "${count(record.written)} written", record.output.ifEmpty { "(no reply)" })
+            Block("Reply", if (record.retry == null) "${count(record.written)} written" else "first", record.output.ifEmpty { "(no reply)" })
+            record.retry?.let { retry ->
+                Block("Reason the app gave", "", retry.reason)
+                Block("Second reply", "${count(record.written)} written in all", retry.output.ifEmpty { "(no reply)" })
+            }
         }
     }
 }
@@ -101,7 +105,7 @@ private fun Block(name: String, size: String, text: String) {
 /** "Read 1,412 / 2,048 tokens · wrote 96". */
 private fun summary(record: ContextRecord): String {
     val read = if (record.read >= 0) count(record.read) else "≈ " + count(record.parts.sumOf { it.tokens })
-    return "Read $read / ${count(record.size)} tokens · wrote ${count(record.written)}"
+    return "Read $read / ${count(record.size)} tokens · wrote ${count(record.written)}" + if (record.retry != null) " · retried" else ""
 }
 
 private fun count(n: Int): String = NumberFormat.getIntegerInstance(Locale.ENGLISH).format(n)
