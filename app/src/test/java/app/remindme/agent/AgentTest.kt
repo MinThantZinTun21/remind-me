@@ -22,6 +22,8 @@ class AgentTest {
 
     private fun call(name: String, vararg args: Pair<String, String>) = ToolCall(name, linkedMapOf(*args))
 
+    private fun instruction() = agent.rules() + "\n\n" + agent.taskList(world.tools.list())
+
     private fun act(name: String, vararg args: Pair<String, String>) = agent.act(listOf(call(name, *args))).single()
 
     @Test
@@ -71,7 +73,7 @@ class AgentTest {
         val card = act(
             "create_task",
             "title" to "Dentist",
-            "due" to "2026-11-20T15:30",
+            "when" to "friday at 3 30 pm",
             "warn_before" to "60,1440",
             "style" to "alarm",
         )
@@ -89,7 +91,7 @@ class AgentTest {
 
     @Test
     fun `a call that leaves out the optional properties gets a one-time notification with no early warning`() {
-        val task = act("create_task", "title" to "Buy milk", "due" to "2026-11-17 18:00").task!!
+        val task = act("create_task", "title" to "Buy milk", "when" to "6 pm").task!!
 
         assertEquals(DeliveryStyle.NOTIFICATION, task.style)
         assertEquals(emptyList<Duration>(), task.leadTimes)
@@ -99,7 +101,7 @@ class AgentTest {
     @Test
     fun `the repeat arguments map onto every repeat rule the app has`() {
         fun rule(vararg args: Pair<String, String>) =
-            act("create_task", "title" to "x", "due" to "2026-11-18T08:00", *args).task!!.repeat
+            act("create_task", "title" to "x", "when" to "tomorrow at 8", *args).task!!.repeat
 
         assertEquals(RepeatRule.daily(), rule("repeat" to "daily"))
         assertEquals(RepeatRule.everyDays(3), rule("repeat" to "daily", "repeat_every" to "3"))
@@ -124,7 +126,7 @@ class AgentTest {
 
     @Test
     fun `a weekly task on chosen weekdays starts on the first of those days after now`() {
-        val task = act("create_task", "title" to "Gym", "due" to "2026-11-17T07:00", "repeat" to "weekly", "repeat_days" to "mon,thu").task!!
+        val task = act("create_task", "title" to "Gym", "when" to "7 am", "repeat" to "weekly", "repeat_days" to "mon,thu").task!!
 
         // Tuesday 07:00 has passed and is not one of the days: the first occurrence is Thursday.
         assertEquals(at("2026-11-19T07:00"), task.due)
@@ -132,23 +134,45 @@ class AgentTest {
 
     @Test
     fun `a value the app cannot read is refused and nothing is created`() {
-        assertEquals("The app cannot read the due time \"tomorrow at 9\".", act("create_task", "title" to "x", "due" to "tomorrow at 9").refusal)
-        assertEquals("The agent gave no due time.", act("create_task", "title" to "x").refusal)
+        assertEquals("The app cannot read when \"whenever\".", act("create_task", "title" to "x", "when" to "whenever").refusal)
         assertEquals(
             "The app cannot read the lead time \"1 hour\".",
-            act("create_task", "title" to "x", "due" to "2026-11-18T09:00", "warn_before" to "1 hour").refusal,
+            act("create_task", "title" to "x", "when" to "tomorrow at 9", "warn_before" to "1 hour").refusal,
         )
         assertEquals(
             "The app cannot read the repeat rule \"fortnightly\".",
-            act("create_task", "title" to "x", "due" to "2026-11-18T09:00", "repeat" to "fortnightly").refusal,
+            act("create_task", "title" to "x", "when" to "tomorrow at 9", "repeat" to "fortnightly").refusal,
         )
         assertEquals("The app has no tool called \"send_email\".", act("send_email", "to" to "x").refusal)
         assertEquals(emptyList<Any>(), world.tools.list())
     }
 
     @Test
+    fun `a call with no when is set for one hour from now`() {
+        assertEquals(at("2026-11-17T11:00"), act("create_task", "title" to "x").task!!.due)
+    }
+
+    @Test
+    fun `words for when that are not in the user's message are refused`() {
+        val card = agent.act(listOf(call("create_task", "title" to "Dentist", "when" to "wednesday at 9")), message = "dentist tomorrow at 9").single()
+
+        assertEquals("The words for when, \"wednesday at 9\", are not all in the message: wednesday. Copy the user's own words.", card.refusal)
+        assertEquals(emptyList<Any>(), world.tools.list())
+    }
+
+    @Test
+    fun `the phone run's failures come out right`() {
+        // 2026-11-18 on the Camon 40: "next tuesday" became Monday, "5 30 tomorrow" became 09:30.
+        val next = agent.act(listOf(call("create_task", "title" to "Bank", "when" to "next tuesday")), message = "bank next tuesday").single()
+        val half = agent.act(listOf(call("create_task", "title" to "Gym", "when" to "5 30 tomorrow")), message = "gym 5 30 tomorrow").single()
+
+        assertEquals(at("2026-11-24T09:00"), next.task!!.due)
+        assertEquals(at("2026-11-18T17:30"), half.task!!.due)
+    }
+
+    @Test
     fun `the tools' own refusals reach the card`() {
-        val card = act("create_task", "title" to "Too late", "due" to "2026-11-17T09:00")
+        val card = act("create_task", "title" to "Too late", "when" to "today at 9 am")
 
         assertFalse(card.went)
         assertEquals("That due time has already passed.", card.refusal)
@@ -161,7 +185,7 @@ class AgentTest {
             TaskDetails("Call mom", at("2026-11-18T09:00"), DeliveryStyle.ALARM, listOf(Duration.ofMinutes(15)), RepeatRule.daily()),
         ) as ToolResult.Ok).task
 
-        val card = act("update_task", "id" to before.id.toString(), "due" to "2026-11-18T10:30")
+        val card = act("update_task", "id" to before.id.toString(), "when" to "10 30")
 
         val after = world.tools.list().single()
         assertTrue(card.went)
@@ -189,7 +213,7 @@ class AgentTest {
     fun `an update that would leave the task as it was is refused, so the card does not say Changed`() {
         val before = (world.tools.create(TaskDetails("Call mom", at("2026-11-18T09:00"))) as ToolResult.Ok).task
 
-        val card = act("update_task", "id" to before.id.toString(), "due" to "2026-11-18 09:00")
+        val card = act("update_task", "id" to before.id.toString(), "when" to "tomorrow at 9")
 
         assertFalse(card.went)
         assertEquals("The agent's change left \"Call mom\" exactly as it was.", card.refusal)
@@ -198,13 +222,13 @@ class AgentTest {
 
     @Test
     fun `a daily task can be moved a day after an earlier change to it was undone`() {
-        val created = act("create_task", "title" to "Call mom", "due" to "2026-11-18T09:00", "repeat" to "daily").task!!
+        val created = act("create_task", "title" to "Call mom", "when" to "tomorrow at 9", "repeat" to "daily").task!!
         val id = "id" to created.id.toString()
 
-        agent.undo(act("update_task", id, "due" to "2026-11-18T09:00", "warn_before" to "0", "style" to "alarm"))
+        agent.undo(act("update_task", id, "when" to "tomorrow at 9", "warn_before" to "0", "style" to "alarm"))
         assertEquals(listOf(created), world.tools.list())
 
-        val moved = act("update_task", id, "due" to "2026-11-19T09:00", "repeat_days" to "fri")
+        val moved = act("update_task", id, "when" to "thursday at 9", "repeat_days" to "fri")
         assertTrue(moved.refusal, moved.went)
         assertEquals(at("2026-11-19T09:00"), world.tools.list().single().due)
     }
@@ -224,14 +248,14 @@ class AgentTest {
 
     @Test
     fun `undo takes back a create, an update, a delete and a completion`() {
-        val created = act("create_task", "title" to "Dentist", "due" to "2026-11-20T15:30")
+        val created = act("create_task", "title" to "Dentist", "when" to "friday at 3 30 pm")
         agent.undo(created)
         assertEquals(emptyList<Any>(), world.tools.list())
 
         val task = (world.tools.create(TaskDetails("Call mom", at("2026-11-18T09:00"))) as ToolResult.Ok).task
         val id = "id" to task.id.toString()
 
-        agent.undo(act("update_task", id, "title" to "Call dad", "due" to "2026-11-19T09:00"))
+        agent.undo(act("update_task", id, "title" to "Call dad", "when" to "thursday at 9"))
         assertEquals(listOf(task), world.tools.list())
 
         agent.undo(act("delete_task", id))
@@ -244,45 +268,45 @@ class AgentTest {
 
     @Test
     fun `the time now comes with the user's message, so the instruction stays the same while the user types`() {
-        val before = agent.systemInstruction()
+        val before = instruction()
 
         assertEquals("Now: Tuesday 2026-11-17 10:00\nwake me at 8", agent.userMessage("wake me at 8"))
         world.clock.local = world.clock.local.plusMinutes(7)
 
-        assertEquals(before, agent.systemInstruction())
+        assertEquals(before, instruction())
         assertEquals("Now: Tuesday 2026-11-17 10:07\nwake me at 8", agent.userMessage("wake me at 8"))
     }
 
     @Test
     fun `the agent is told to answer with tool calls only`() {
-        val told = agent.systemInstruction()
+        val told = instruction()
 
         assertTrue(told, "your whole reply is tool calls and nothing else" in told)
         assertTrue(told, "never ask a question" in told)
     }
 
     @Test
-    fun `the agent is told the day, the coming days by name and date, and the tasks with their ids`() {
+    fun `the agent is told the tasks with their ids, and no date to count from`() {
         val task = (world.tools.create(
             TaskDetails("Call mom", at("2026-11-18T09:00"), DeliveryStyle.ALARM, listOf(Duration.ofMinutes(15)), RepeatRule.daily()),
         ) as ToolResult.Ok).task
 
-        val told = agent.systemInstruction()
+        val told = instruction()
 
-        assertTrue(told, "Today: Tuesday 2026-11-17." in told)
-        assertTrue(told, "Wed 2026-11-18 (tomorrow), Thu 2026-11-19" in told)
-        assertTrue(told, "Tue 2026-12-01" in told)
+        assertFalse(told, "Today:" in told)
+        assertFalse(told, "Coming days" in told)
+        assertFalse(told, "never count days" in told)
         assertTrue(told, "- id ${task.id}: Call mom | due Wed 2026-11-18 09:00 | daily | alarm | warns 15 min before" in told)
     }
 
     @Test
     fun `the agent has one word for a working-week repeat, so it need not list the five days`() {
-        assertTrue("every weekday, every working day or Monday to Friday is weekdays" in agent.systemInstruction())
+        assertTrue("every weekday, every working day or Monday to Friday is weekdays" in instruction())
         assertTrue("\"weekdays\"" in Agent.TOOLS_JSON)
     }
 
     @Test
     fun `with no tasks the agent is told there are none`() {
-        assertTrue("Tasks:\n- (none)" in agent.systemInstruction())
+        assertTrue("Tasks:\n- (none)" in instruction())
     }
 }

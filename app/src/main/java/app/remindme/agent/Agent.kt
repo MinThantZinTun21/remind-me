@@ -51,22 +51,10 @@ sealed interface Undo {
 class Agent(private val tools: Tools, private val clock: Clock) {
 
     /**
-     * What the model is told before the user's text: today, the coming days, the tasks and the rules.
-     * It holds no time of day, so the model can read it while the user is still typing; the time comes
-     * with the message, in [userMessage].
+     * The part of the instruction that is the same whatever tasks and conversation come with it. It holds
+     * no date: the model copies the user's words for when, and [WordReader] works out the moment.
      */
-    fun systemInstruction(): String = rules() + "\n\n" + taskList(tools.list().take(MAX_TASKS))
-
-    /** The part of the instruction that is the same whatever tasks and conversation come with it. */
-    fun rules(): String {
-        val today = clock.now().toLocalDate()
-        val days = (1..COMING_DAYS).joinToString(", ") { ahead ->
-            today.plusDays(ahead.toLong()).format(DAY) + if (ahead == 1) " (tomorrow)" else ""
-        }
-        return SYSTEM
-            .replace("{today}", today.format(TODAY))
-            .replace("{days}", days)
-    }
+    fun rules(): String = SYSTEM
 
     /** The tasks the model is shown, each with its id. */
     fun taskList(tasks: List<Task>): String =
@@ -86,12 +74,13 @@ class Agent(private val tools: Tools, private val clock: Clock) {
 
     /**
      * Runs every call, in order, and reports each on an action card. With [shown], a call may only name a
-     * task the model was shown, or one it created in this reply.
+     * task the model was shown, or one it created in this reply. With [message], the user's words the
+     * calls answer, words for when must be copied from it.
      */
-    fun act(calls: List<ToolCall>, shown: Set<Long>? = null): List<ActionCard> {
+    fun act(calls: List<ToolCall>, shown: Set<Long>? = null, message: String? = null): List<ActionCard> {
         val visible = shown?.toMutableSet()
         return calls.map { call ->
-            act(call, visible).also { card -> if (card.action == ActionCard.Action.CREATE) card.task?.let { visible?.add(it.id) } }
+            act(call, visible, message).also { card -> if (card.action == ActionCard.Action.CREATE) card.task?.let { visible?.add(it.id) } }
         }
     }
 
@@ -102,24 +91,23 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         null -> null
     }
 
-    private fun act(call: ToolCall, visible: Set<Long>?): ActionCard = when (call.name) {
-        "create_task" -> create(call)
-        "update_task" -> onExisting(call, visible, ActionCard.Action.UPDATE) { before -> update(call, before) }
+    private fun act(call: ToolCall, visible: Set<Long>?, message: String?): ActionCard = when (call.name) {
+        "create_task" -> create(call, message)
+        "update_task" -> onExisting(call, visible, ActionCard.Action.UPDATE) { before -> update(call, before, message) }
         "delete_task" -> onExisting(call, visible, ActionCard.Action.DELETE) { before -> tools.delete(before.id) }
         "complete_task" -> onExisting(call, visible, ActionCard.Action.COMPLETE) { before -> tools.done(before.id) }
         else -> ActionCard(call, ActionCard.Action.UNKNOWN, null, "The app has no tool called \"${call.name}\".", null)
     }
 
-    private fun create(call: ToolCall): ActionCard {
+    private fun create(call: ToolCall, message: String?): ActionCard {
         val action = ActionCard.Action.CREATE
         val title = call.args["title"].orEmpty()
-        val dueText = call.args["due"] ?: return ActionCard(call, action, null, "The agent gave no due time.", null)
-        val due = dueTime(dueText) ?: return ActionCard(call, action, null, "The app cannot read the due time \"$dueText\".", null)
         val details = try {
+            val style = style(call.args["style"]) ?: DeliveryStyle.NOTIFICATION
             TaskDetails(
                 title = title,
-                due = due,
-                style = style(call.args["style"]) ?: DeliveryStyle.NOTIFICATION,
+                due = due(whenWords(call.args), message, style, keep = null),
+                style = style,
                 leadTimes = leadTimes(call.args["warn_before"]).orEmpty(),
                 repeat = repeat(call.args) ?: RepeatRule.ONCE,
             )
@@ -133,9 +121,9 @@ class Agent(private val tools: Tools, private val clock: Clock) {
     }
 
     /** Only what the call gives changes; everything else stays as the task has it. */
-    private fun update(call: ToolCall, before: Task): ToolResult {
+    private fun update(call: ToolCall, before: Task, message: String?): ToolResult {
         val args = call.args
-        val due = args["due"]?.let { dueTime(it) ?: throw Unreadable("The app cannot read the due time \"$it\".") }
+        val due = whenWords(args)?.let { due(it, message, style(args["style"]) ?: before.style, keep = before.due) }
         val newRule = repeat(args)
         val until = args["repeat_until"]?.let(::day)
         val asItWas = TaskDetails(before.title, before.due, before.style, before.leadTimes, before.repeat)
@@ -170,12 +158,18 @@ class Agent(private val tools: Tools, private val clock: Clock) {
 
     private class Unreadable(override val message: String) : Exception(message)
 
-    /** `YYYY-MM-DDTHH:MM`, with a space for the `T` or seconds on the end if the agent writes them. */
-    private fun dueTime(text: String): LocalDateTime? {
-        val match = DUE.find(text.trim()) ?: return null
-        return runCatching {
-            LocalDate.parse(match.groupValues[1]).atTime(match.groupValues[2].toInt(), match.groupValues[3].toInt())
-        }.getOrNull()
+    /** The user's words for when; `due` is what the first tool contract called it, and some models still write it. */
+    private fun whenWords(args: Map<String, String>): String? = args["when"] ?: args["due"]
+
+    /** The moment [words] mean; refused when the app cannot read them or they are not the user's own. */
+    private fun due(words: String?, message: String?, style: DeliveryStyle, keep: LocalDateTime?): LocalDateTime {
+        val given = words.orEmpty()
+        if (message != null) {
+            val foreign = WordReader.notIn(given, message)
+            if (foreign.isNotEmpty()) throw Unreadable("The words for when, \"$given\", are not all in the message: ${foreign.joinToString(", ")}. Copy the user's own words.")
+        }
+        return WordReader.due(given, clock.now(), style == DeliveryStyle.ALARM, keep)
+            ?: throw Unreadable("The app cannot read when \"$given\".")
     }
 
     private fun day(text: String): LocalDate =
@@ -252,23 +246,14 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         /** A call named a task the model was not shown. */
         const val NOT_FOUND = "Couldn't find that task."
 
-        /** Enough days to look up "next Friday" instead of counting to it. */
-        private const val COMING_DAYS = 14
-
-        /** More tasks than this do not fit beside the rules in the model's small context. */
-        private const val MAX_TASKS = 15
-
         private val WORKING_WEEK = setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
-        private val DUE = Regex("^(\\d{4}-\\d{2}-\\d{2})[T ](\\d{1,2}):(\\d{2})(?::\\d{2}(?:\\.\\d+)?)?$")
         private val NOW = DateTimeFormatter.ofPattern("EEEE yyyy-MM-dd HH:mm", Locale.ENGLISH)
-        private val TODAY = DateTimeFormatter.ofPattern("EEEE yyyy-MM-dd", Locale.ENGLISH)
-        private val DAY = DateTimeFormatter.ofPattern("EEE yyyy-MM-dd", Locale.ENGLISH)
         private val TASK_DUE = DateTimeFormatter.ofPattern("EEE yyyy-MM-dd HH:mm", Locale.ENGLISH)
         private val SUMMARY_DUE = DateTimeFormatter.ofPattern("EEE d MMM HH:mm", Locale.ENGLISH)
 
         private const val TASK_PROPERTIES = """
           "title": {"type": "string", "description": "What to do, in a few words."},
-          "due": {"type": "string", "description": "When it happens, as YYYY-MM-DDTHH:MM in 24-hour time."},
+          "when": {"type": "string", "description": "The user's own words for when it happens, copied from the message, like next tuesday at 2 pm."},
           "repeat": {"type": "string", "enum": ["none", "daily", "weekdays", "weekly", "monthly", "yearly"]},
           "repeat_every": {"type": "integer", "description": "Every how many days or weeks. Leave out for 1."},
           "repeat_days": {"type": "string", "description": "With weekly, the weekdays it falls on, like mon,wed,fri."},
@@ -282,11 +267,11 @@ class Agent(private val tools: Tools, private val clock: Clock) {
           {"type": "function", "function": {"name": "create_task",
             "description": "Adds a task the user wants to be reminded of.",
             "parameters": {"type": "object", "properties": {$TASK_PROPERTIES},
-              "required": ["title", "due"]}}},
+              "required": ["title"]}}},
           {"type": "function", "function": {"name": "update_task",
             "description": "Changes a task from the Tasks list. Give its id and only the properties that change, written as in create_task.",
             "parameters": {"type": "object", "properties": {
-              "id": {"type": "integer"}, "title": {"type": "string"}, "due": {"type": "string"},
+              "id": {"type": "integer"}, "title": {"type": "string"}, "when": {"type": "string"},
               "repeat": {"type": "string"}, "repeat_every": {"type": "integer"}, "repeat_days": {"type": "string"},
               "repeat_until": {"type": "string"}, "warn_before": {"type": "string"}, "style": {"type": "string"}},
               "required": ["id"]}}},
@@ -301,15 +286,13 @@ class Agent(private val tools: Tools, private val clock: Clock) {
 
         private val SYSTEM = """
         You are the tool-calling part of Remind Me, a reminders and alarms app on the user's phone. Whatever the user types is something they want set, changed or removed. You never talk to the user and never ask a question: your whole reply is tool calls and nothing else. You decide every detail of a task yourself.
-        Today: {today}. Each message starts with the time now.
-        Coming days: {days}.
 
         Rules:
         - Read the message for what the user wants, not for its wording. A statement is a request: "I wake up every morning at 8" is an alarm titled "Wake up", daily at 08:00; "meeting with the bank Friday 3pm" is a reminder for that meeting; "dentist tomorrow" is a reminder tomorrow.
         - One create_task for each thing to be reminded of. Write every call the message needs in this one reply.
         - title is the thing itself in a few words, starting with a capital letter, without "remind me to".
-        - due is the moment the thing happens. Take the date from Today and Coming days; never count days yourself. "in 20 minutes" or "in 2 hours" is added to the time now. A time with no day is the next time the clock shows it. A day with no time: you choose (morning 09:00, noon 12:00, afternoon 15:00, evening 19:00, night 21:00). No day and no time: one hour from now.
-        - repeat only when the thing comes round again: every day, morning or night is daily; every weekday, every working day or Monday to Friday is weekdays; every Monday is weekly with repeat_days mon; Tuesdays and Thursdays is weekly with repeat_days tue,thu; each month is monthly; birthdays are yearly. due is then the first time it happens.
+        - when is the user's own words for when it happens, copied from the message as they typed them: "next tuesday at 2 pm", "5 30 tomorrow", "in 20 minutes". Never work out a date or a time yourself; the app does that. Leave when out if the message says nothing about when.
+        - repeat only when the thing comes round again: every day, morning or night is daily; every weekday, every working day or Monday to Friday is weekdays; every Monday is weekly with repeat_days mon; Tuesdays and Thursdays is weekly with repeat_days tue,thu; each month is monthly; birthdays are yearly. when is then the first time it happens.
         - warn_before is how long before due the user gets an early warning. Use what the user says ("30 minutes before" is 30). If they do not say, you choose: 0 for waking up and for small things done on the spot, 10 to 60 for things to travel to or get ready for, 1440 for birthdays and deadlines.
         - style is alarm when the user says alarm, wake up, or that they must not miss it. Otherwise leave it out.
         - To change, move, cancel or finish something that is already in Tasks, call update_task, delete_task or complete_task with its id. Do not create it again.

@@ -145,13 +145,13 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         val parts = fit.parts + part("Message", message)
         val exchange = try {
             model.open(prefaceOf(fit.parts)).use { talk ->
-                val first = attempt(talk, message, fit.shown, onText)
+                val first = attempt(talk, message, words, fit.shown, onText)
                 val reason = unusable(first)
                 if (reason == null) {
                     exchangeOf(words, first, record(parts, first.reply, fit.leftOut))
                 } else {
                     // Once more in the same talk: the model has the context and its own reply already.
-                    val second = attempt(talk, reason, fit.shown, onText)
+                    val second = attempt(talk, reason, words, fit.shown, onText)
                     val kept = if (second.cards.isNotEmpty() || first.cards.isEmpty()) second else first
                     val record = record(parts, first.reply, fit.leftOut).let {
                         it.copy(written = it.written + second.reply.tokensWritten, retry = Retry(reason, second.reply.text))
@@ -171,10 +171,11 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         val none: Boolean get() = parsed.calls.isEmpty() && parsed.problem == null && parsed.answer.trim().trimEnd('.').equals("NONE", ignoreCase = true)
     }
 
-    private fun attempt(talk: Talk, text: String, shown: Set<Long>, onText: (String) -> Unit): Attempt {
+    /** Says [text] to the model and carries out the calls in its reply, which answer the owner's [words]. */
+    private fun attempt(talk: Talk, text: String, words: String, shown: Set<Long>, onText: (String) -> Unit): Attempt {
         val reply = talk.say(text, onText)
         val parsed = ReplyParser.parse(reply.text)
-        return Attempt(reply, parsed, agent.act(parsed.calls, shown))
+        return Attempt(reply, parsed, agent.act(parsed.calls, shown, words))
     }
 
     /** Why nothing in the reply could be used, told to the model for its second attempt; null when something could, or it said NONE. */

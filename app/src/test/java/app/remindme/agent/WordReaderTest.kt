@@ -1,0 +1,170 @@
+package app.remindme.agent
+
+import app.remindme.core.at
+import java.time.LocalDateTime
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/** Ticket 03's table. Wednesday 18 November 2026, 09:15, unless a test says otherwise. */
+class WordReaderTest {
+    private val now = at("2026-11-18T09:15")
+
+    private fun read(words: String, now: LocalDateTime = this.now, alarm: Boolean = false, keep: LocalDateTime? = null) =
+        WordReader.due(words, now, alarm, keep)
+
+    @Test
+    fun `today, tomorrow and the day after tomorrow`() {
+        assertEquals(at("2026-11-18T17:00"), read("today at 5 pm"))
+        assertEquals(at("2026-11-19T09:00"), read("tomorrow"))
+        assertEquals(at("2026-11-20T09:00"), read("day after tomorrow"))
+        assertEquals(at("2026-11-20T09:00"), read("the day after tomorrow"))
+    }
+
+    @Test
+    fun `a weekday is the next one, today only while its time is still ahead`() {
+        assertEquals(at("2026-11-20T09:00"), read("friday"))
+        assertEquals(at("2026-11-20T09:00"), read("on friday"))
+        assertEquals(at("2026-11-20T09:00"), read("this friday"))
+        assertEquals(at("2026-11-20T09:00"), read("coming friday"))
+        assertEquals(at("2026-11-18T15:00"), read("wednesday at 3 pm"))
+        assertEquals(at("2026-11-25T09:00"), read("wednesday"))
+        assertEquals(at("2026-11-23T09:00"), read("mon"))
+    }
+
+    @Test
+    fun `next tuesday is the tuesday of next week`() {
+        assertEquals(at("2026-11-24T09:00"), read("next tuesday"))
+        assertEquals(at("2026-11-24T09:00"), read("tuesday next week"))
+        assertEquals(at("2026-12-01T09:00"), read("next tuesday", now = at("2026-11-23T09:15")))
+    }
+
+    @Test
+    fun `next week is its monday`() {
+        assertEquals(at("2026-11-23T09:00"), read("next week"))
+    }
+
+    @Test
+    fun `this weekend and next weekend are the coming saturday and the one after`() {
+        assertEquals(at("2026-11-21T09:00"), read("this weekend"))
+        assertEquals(at("2026-11-28T09:00"), read("next weekend"))
+    }
+
+    @Test
+    fun `a day of the month is the next such day, the month's last day when it has none`() {
+        assertEquals(at("2026-12-05T09:00"), read("the 5th"))
+        assertEquals(at("2026-11-30T09:00"), read("on the 31st"))
+        assertEquals(at("2026-11-20T09:00"), read("the 20th"))
+    }
+
+    @Test
+    fun `a date is the next such date, this year or next`() {
+        assertEquals(at("2026-12-25T09:00"), read("december 25"))
+        assertEquals(at("2026-12-25T09:00"), read("25 dec"))
+        assertEquals(at("2026-12-25T09:00"), read("25/12"))
+        assertEquals(at("2027-03-01T09:00"), read("march 1st"))
+    }
+
+    @Test
+    fun `end of the month is its last day`() {
+        assertEquals(at("2026-11-30T09:00"), read("end of the month"))
+        assertEquals(at("2026-11-30T09:00"), read("end of month"))
+    }
+
+    @Test
+    fun `minutes and hours from now are exact`() {
+        assertEquals(at("2026-11-18T09:35"), read("in 20 minutes"))
+        assertEquals(at("2026-11-18T11:15"), read("in 2 hours"))
+        assertEquals(at("2026-11-18T10:15"), read("in an hour"))
+        assertEquals(at("2026-11-18T09:45"), read("in half an hour"))
+    }
+
+    @Test
+    fun `days, weeks and months from today come at the stated or usual time`() {
+        assertEquals(at("2026-11-21T09:00"), read("in 3 days"))
+        assertEquals(at("2026-12-02T09:00"), read("in 2 weeks"))
+        assertEquals(at("2026-12-18T09:00"), read("in a month"))
+        assertEquals(at("2026-11-25T09:00"), read("a week from today"))
+        assertEquals(at("2026-12-02T18:00"), read("in 2 weeks at 6 pm"))
+        assertEquals(at("2027-02-28T09:00"), read("in 3 months", now = at("2026-11-30T09:15")))
+    }
+
+    @Test
+    fun `a time with am, pm or a 24-hour clock is that time`() {
+        assertEquals(at("2026-11-18T17:00"), read("at 5 pm"))
+        assertEquals(at("2026-11-18T17:00"), read("5pm"))
+        assertEquals(at("2026-11-18T17:00"), read("17:00"))
+        assertEquals(at("2026-11-18T17:30"), read("5 30 pm"))
+        assertEquals(at("2026-11-18T17:30"), read("5:30pm"))
+        assertEquals(at("2026-11-19T07:00"), read("7 am"))
+    }
+
+    @Test
+    fun `with no day said, a bare time is whichever reading comes round next`() {
+        assertEquals(at("2026-11-18T17:30"), read("5 30"))
+        assertEquals(at("2026-11-18T21:00"), read("at 9"))
+        assertEquals(at("2026-11-18T09:30"), read("9 30"))
+    }
+
+    @Test
+    fun `with a day said, 7 to 11 is morning, 12 noon and 1 to 6 afternoon, unless it is an alarm`() {
+        assertEquals(at("2026-11-19T17:30"), read("5 30 tomorrow"))
+        assertEquals(at("2026-11-19T09:00"), read("tomorrow at 9"))
+        assertEquals(at("2026-11-19T12:00"), read("tomorrow at 12"))
+        assertEquals(at("2026-11-19T05:30"), read("5 30 tomorrow", alarm = true))
+        assertEquals(at("2026-11-19T08:00"), read("tomorrow morning at 8"))
+        assertEquals(at("2026-11-19T20:00"), read("tomorrow evening at 8"))
+    }
+
+    @Test
+    fun `noon and midnight`() {
+        assertEquals(at("2026-11-18T12:00"), read("noon"))
+        assertEquals(at("2026-11-19T00:00"), read("midnight"))
+        assertEquals(at("2026-11-20T00:00"), read("tomorrow at midnight"))
+    }
+
+    @Test
+    fun `parts of the day have their usual times`() {
+        assertEquals(at("2026-11-19T09:00"), read("tomorrow morning"))
+        assertEquals(at("2026-11-18T15:00"), read("this afternoon"))
+        assertEquals(at("2026-11-18T19:00"), read("evening"))
+        assertEquals(at("2026-11-18T21:00"), read("night"))
+    }
+
+    @Test
+    fun `tonight is 21 00 today, or the time it is given`() {
+        assertEquals(at("2026-11-18T21:00"), read("tonight"))
+        assertEquals(at("2026-11-18T20:00"), read("tonight at 8"))
+    }
+
+    @Test
+    fun `no when at all is one hour from now`() {
+        assertEquals(at("2026-11-18T10:15"), read(""))
+    }
+
+    @Test
+    fun `words it cannot read are not guessed`() {
+        assertNull(read("whenever"))
+        assertNull(read("at"))
+        assertNull(read("2026-11-19T09:00"))
+        assertNull(read("at 25"))
+    }
+
+    @Test
+    fun `on update, words giving only a time keep the task's day, and only a day keep its time`() {
+        val task = at("2026-11-20T18:00")
+        assertEquals(at("2026-11-20T19:00"), read("7", keep = task))
+        assertEquals(at("2026-11-20T07:30"), read("7 30 am", keep = task))
+        assertEquals(at("2026-11-24T18:00"), read("next tuesday", keep = task))
+        assertEquals(at("2026-11-19T18:00"), read("tomorrow", keep = task))
+    }
+
+    @Test
+    fun `words for when that are not in the message are named`() {
+        assertEquals(emptyList<String>(), WordReader.notIn("next tuesday at 2 pm", "Remind me next Tuesday at 2pm to call the bank"))
+        assertEquals(emptyList<String>(), WordReader.notIn("in 20 mins", "in twenty minutes check the oven"))
+        assertEquals(emptyList<String>(), WordReader.notIn("on the 5th", "pay rent 5th"))
+        assertEquals(listOf("wednesday"), WordReader.notIn("wednesday at 9", "tomorrow at 9 dentist"))
+        assertEquals(listOf("17", "0"), WordReader.notIn("17:00", "call mom at 5 pm"))
+    }
+}

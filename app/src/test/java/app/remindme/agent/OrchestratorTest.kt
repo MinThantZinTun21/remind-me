@@ -19,7 +19,7 @@ class OrchestratorTest {
 
     @Test
     fun `a message becomes the same cards as the reply's calls`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
 
         val exchange = orchestrator.send("call mom thursday at 9")
 
@@ -33,7 +33,7 @@ class OrchestratorTest {
 
     @Test
     fun `the next message's context holds the earlier words and one line per card, not the raw calls`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
         orchestrator.send("call mom thursday at 9")
         model.replies += "NONE"
 
@@ -57,9 +57,9 @@ class OrchestratorTest {
 
     @Test
     fun `a follow-up naming the task by id changes the task just made`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-18T18:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "tomorrow at 6"))
         orchestrator.send("call mom tomorrow at 6")
-        model.replies += reply(call("update_task", "id" to "1", "due" to "2026-11-18T19:00"))
+        model.replies += reply(call("update_task", "id" to "1", "when" to "7"))
 
         val exchange = orchestrator.send("change it to 7")
 
@@ -82,7 +82,7 @@ class OrchestratorTest {
 
     @Test
     fun `ending the visit ends the conversation`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
         orchestrator.send("call mom thursday at 9")
 
         orchestrator.endVisit()
@@ -95,7 +95,7 @@ class OrchestratorTest {
 
     @Test
     fun `an undo on a card reaches the model before the next message`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
         val card = orchestrator.send("call mom thursday at 9").cards.single()
 
         orchestrator.undo(card)
@@ -109,7 +109,7 @@ class OrchestratorTest {
 
     @Test
     fun `an edit made on the task reaches the model before the next message`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
         val task = orchestrator.send("call mom thursday at 9").cards.single().task!!
 
         world.tools.update(task.id, TaskDetails(task.title, at("2026-11-20T09:00"), task.style, task.leadTimes, task.repeat))
@@ -120,8 +120,8 @@ class OrchestratorTest {
 
     @Test
     fun `a day tap on a card reaches the model before the next message`() {
-        model.replies += reply(call("create_task", "title" to "Gym", "due" to "2026-11-18T07:00", "repeat" to "daily"))
-        val task = orchestrator.send("gym every day at 7").cards.single().task!!
+        model.replies += reply(call("create_task", "title" to "Gym", "when" to "7 am", "repeat" to "daily"))
+        val task = orchestrator.send("gym every day at 7 am").cards.single().task!!
 
         DayButtons(world.tools, world.clock).tap(task, DayOfWeek.SUNDAY)
 
@@ -130,9 +130,9 @@ class OrchestratorTest {
 
     @Test
     fun `a task the model changes later is not marked as changed by the owner`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-18T18:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "tomorrow at 6"))
         orchestrator.send("call mom tomorrow at 6")
-        model.replies += reply(call("update_task", "id" to "1", "due" to "2026-11-18T19:00"))
+        model.replies += reply(call("update_task", "id" to "1", "when" to "7"))
         orchestrator.send("change it to 7")
 
         assertFalse(orchestrator.conversation(), "you changed it" in orchestrator.conversation())
@@ -222,7 +222,7 @@ class OrchestratorTest {
 
     @Test
     fun `the context record lists every part as the model read it, in order, adding up to the exact total`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
         orchestrator.send("call mom thursday at 9")
         model.replies += "NONE"
 
@@ -255,7 +255,7 @@ class OrchestratorTest {
 
     @Test
     fun `what the model reads in the background is what the next message opens with`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
         orchestrator.send("call mom thursday at 9")
 
         orchestrator.prepare()
@@ -270,7 +270,7 @@ class OrchestratorTest {
     @Test
     fun `a garbled reply is asked for once more in the same talk, giving the reason`() {
         model.replies += "<tool_call><function=create_task><parameter=title>Call mom"
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
 
         val exchange = orchestrator.send("call mom thursday at 9")
 
@@ -281,41 +281,41 @@ class OrchestratorTest {
         assertEquals(null, exchange.problem)
         val retry = exchange.context.retry!!
         assertEquals(model.said[1], retry.reason)
-        assertEquals(reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00")), retry.output)
+        assertEquals(reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9")), retry.output)
         assertEquals("<tool_call><function=create_task><parameter=title>Call mom", exchange.context.output)
     }
 
     @Test
     fun `words instead of calls, and calls that all fail, are unusable`() {
         model.replies += "Sure, I will remind you."
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "thursday"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "9 today"))
 
-        val exchange = orchestrator.send("call mom thursday at 9")
+        val exchange = orchestrator.send("call mom at 9 today")
 
         assertEquals(2, model.said.size)
         assertTrue(model.said[1], "no tool call" in model.said[1])
         assertFalse(exchange.cards.single().went)
-        assertEquals("The app cannot read the due time \"thursday\".", exchange.cards.single().refusal)
+        assertEquals("That due time has already passed.", exchange.cards.single().refusal)
         assertTrue(world.tools.list().isEmpty())
     }
 
     @Test
     fun `there is only one second attempt`() {
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "thursday"))
-        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "thursday 9"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "9 today"))
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "today at 9"))
 
-        val exchange = orchestrator.send("call mom thursday at 9")
+        val exchange = orchestrator.send("call mom at 9 today")
 
         assertEquals(2, model.said.size)
-        assertTrue(model.said[1], "The app cannot read the due time \"thursday\"." in model.said[1])
-        assertEquals("The app cannot read the due time \"thursday 9\".", exchange.cards.single().refusal)
+        assertTrue(model.said[1], "That due time has already passed." in model.said[1])
+        assertEquals("That due time has already passed.", exchange.cards.single().refusal)
     }
 
     @Test
     fun `a reply with a usable call is not asked again, and its working calls keep their cards`() {
         model.replies += reply(
-            call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"),
-            call("create_task", "title" to "Dentist", "due" to "friday"),
+            call("create_task", "title" to "Call mom", "when" to "thursday at 9"),
+            call("create_task", "title" to "Dentist", "when" to "monday"),
         )
 
         val exchange = orchestrator.send("call mom thursday at 9 and dentist friday")
