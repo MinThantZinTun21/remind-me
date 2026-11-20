@@ -23,12 +23,22 @@ object ModelType {
 
     /**
      * Whether Remind Me can read the replies of a model of [type]. A file whose type could not be read at all
-     * is let through: the runtime and Remind Me's reader still try, and a wrong refusal would lock the owner out.
+     * is let through: the runtime and Remind Me's reader still try, and a wrong refusal would lock the user out.
      */
     fun readable(type: String?): Boolean = type == null || type == GENERIC || type in RUNTIME_READS
 
     /** The type [file] names, like "lfm2" or "generic_model"; null when the file does not say or cannot be read. */
-    fun of(file: File): String? = runCatching { RandomAccessFile(file, "r").use(::read) }.getOrNull()
+    fun of(file: File): String? {
+        // The model list is built on the main thread: each file's header is read once, not on every look.
+        val key = "${file.path}:${file.length()}:${file.lastModified()}"
+        synchronized(seen) { if (key in seen) return seen[key] }
+        val type = runCatching { RandomAccessFile(file, "r").use(::read) }.getOrNull()
+        synchronized(seen) { seen[key] = type }
+        return type
+    }
+
+    /** The type each file was found to name, by path, size and time written. */
+    private val seen = HashMap<String, String?>()
 
     private fun read(file: RandomAccessFile): String? {
         val start = bytes(file, 0, HEADER)

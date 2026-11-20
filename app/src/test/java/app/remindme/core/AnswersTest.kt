@@ -95,6 +95,21 @@ class AnswersTest {
     }
 
     @Test
+    fun `the tasks due in a range are those from its start up to but not at its end, soonest first, and none move`() {
+        val world = World(now = "2026-11-17T08:00")
+        val late = world.tools.create(TaskDetails("Late", at("2026-11-17T09:00"))).task()
+        world.advanceTo("2026-11-17T10:00")
+        val friday = world.tools.create(TaskDetails("Friday", at("2026-11-20T09:00"))).task()
+        val early = world.tools.create(TaskDetails("Early Friday", at("2026-11-20T00:00"))).task()
+        world.tools.create(TaskDetails("Saturday", at("2026-11-21T00:00")))
+
+        assertEquals(listOf(early.id, friday.id), world.tools.dueBetween(at("2026-11-20T00:00"), at("2026-11-21T00:00")).map { it.id })
+        assertEquals(listOf(late.id), world.tools.dueBetween(null, at("2026-11-17T10:00")).map { it.id })
+        assertEquals(4, world.tools.dueBetween(null, null).size)
+        assertEquals(at("2026-11-20T09:00"), world.tools.list().first { it.id == friday.id }.due)
+    }
+
+    @Test
     fun `snooze can be used again and again`() {
         val (world, task) = worldWithTaskDueAt3pm()
         world.advanceTo("2026-11-17T15:00")

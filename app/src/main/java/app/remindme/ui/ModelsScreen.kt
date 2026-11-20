@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Where the owner downloads, chooses and deletes the model the agent uses. Downloads go through Android's
+ * Where the user downloads, chooses and deletes the model the agent uses. Downloads go through Android's
  * download service over Wi-Fi only, so they carry on with this screen, or the app, closed.
  */
 @Composable

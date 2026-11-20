@@ -10,7 +10,7 @@ import java.time.temporal.TemporalAdjusters
 import kotlin.math.abs
 
 /**
- * Turns the owner's own words for when, copied by the model, into a moment, with the meanings agreed in
+ * Turns the user's own words for when, copied by the model, into a moment, with the meanings agreed in
  * research ticket 03. The model never works out a date: this does, with plain arithmetic.
  */
 object WordReader {
@@ -27,7 +27,7 @@ object WordReader {
         return said.resolve(now, alarm, keep)
     }
 
-    /** What the owner's words for how a task comes round say: the rule, its last day, and the weekday an every-few-weeks rule falls on. */
+    /** What the user's words for how a task comes round say: the rule, its last day, and the weekday an every-few-weeks rule falls on. */
     data class RepeatWords(val rule: RepeatRule?, val until: LocalDate? = null, val on: DayOfWeek? = null)
 
     /**
@@ -174,6 +174,9 @@ object WordReader {
 
     /** The tasks a list is shown for: those due from [from] (open when null) up to, not including, [to] (open when null). */
     data class Range(val from: LocalDateTime?, val to: LocalDateTime?, val label: String) {
+        /** Every task, whenever it is due. */
+        val all: Boolean get() = from == null && to == null
+
         fun holds(due: LocalDateTime): Boolean = (from == null || due >= from) && (to == null || due < to)
     }
 
@@ -448,7 +451,7 @@ object WordReader {
     /** Words that carry no meaning of their own in words for when. */
     private val FILLERS = setOf("at", "on", "the", "of", "by", "this", "coming", "in", "o", "clock", "oclock", "around", "about")
 
-    /** The only words the model may add to the owner's when it copies them. */
+    /** The only words the model may add to the user's when it copies them. */
     private val COPY_FILLERS = setOf("at", "on", "the", "of", "and", "a", "an")
 
     private val NUMBER_WORDS = mapOf(

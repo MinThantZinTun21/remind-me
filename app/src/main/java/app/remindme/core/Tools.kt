@@ -116,6 +116,10 @@ class Tools(
     /** The tasks still to do, soonest first. */
     fun list(): List<Task> = exclusively { store.all().filter { it.doneAt == null }.sortedBy { it.due } }
 
+    /** The tasks on the list due from [from] up to but not at [to], soonest first; a null end leaves that side open. Read-only. */
+    fun dueBetween(from: LocalDateTime?, to: LocalDateTime?): List<Task> =
+        list().filter { (from == null || it.due >= from) && (to == null || it.due < to) }
+
     /** The one-time tasks marked done and still in history, most recently done first. */
     fun history(): List<Task> = exclusively {
         val now = clock.now()
@@ -153,8 +157,7 @@ class Tools(
     /** The user asks to be told about the occurrence again in ten minutes. The due time does not move. */
     fun snooze(id: Long): ToolResult = exclusively {
         val task = onTheList(id) ?: return ToolResult.Refused(NO_SUCH_TASK)
-        announcer.clear(id)
-        saved(task.copy(snoozedUntil = clock.instant().plus(SNOOZE_LENGTH), ringingUntil = null))
+        snoozed(task, SNOOZE_LENGTH)
     }
 
     /**
@@ -170,8 +173,12 @@ class Tools(
         if (length > MAX_SNOOZE || task.nextDue()?.let { back >= it } == true) {
             return ToolResult.Refused("That is longer than a snooze. To move ${task.title}, say when.")
         }
-        announcer.clear(id)
-        saved(task.copy(snoozedUntil = clock.instant().plus(length), ringingUntil = null))
+        snoozed(task, length)
+    }
+
+    private fun snoozed(task: Task, length: Duration): ToolResult {
+        announcer.clear(task.id)
+        return saved(task.copy(snoozedUntil = clock.instant().plus(length), ringingUntil = null))
     }
 
     /** The user silences the task without saying it is done: it stays overdue and says nothing more. */

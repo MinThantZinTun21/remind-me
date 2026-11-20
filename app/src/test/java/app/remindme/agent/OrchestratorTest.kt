@@ -84,10 +84,10 @@ class OrchestratorTest {
 
         orchestrator.send("thanks")
 
-        val instruction = model.prefaces.last().instruction
-        assertTrue(instruction, "Conversation so far:\nUser: call mom thursday at 9\nRemind Me: created id 1 Call mom, Thu 19 Nov 09:00, once" in instruction)
-        assertFalse(instruction, "<tool_call>" in instruction)
-        assertTrue(instruction, "- id 1: Call mom | due Thu 2026-11-19 09:00" in instruction)
+        val system = model.prefaces.last().system
+        assertTrue(system, "Conversation so far:\nUser: call mom thursday at 9\nRemind Me: created id 1 Call mom, Thu 19 Nov 09:00, once" in system)
+        assertFalse(system, "<tool_call>" in system)
+        assertTrue(system, "- id 1: Call mom | due Thu 2026-11-19 09:00" in system)
     }
 
     @Test
@@ -96,7 +96,7 @@ class OrchestratorTest {
 
         orchestrator.send("hello")
 
-        assertFalse(model.prefaces.single().instruction.contains("Conversation so far:"))
+        assertFalse(model.prefaces.single().system.contains("Conversation so far:"))
         assertEquals(Agent.TOOLS_JSON, model.prefaces.single().tools)
     }
 
@@ -134,7 +134,7 @@ class OrchestratorTest {
         model.replies += "NONE"
         orchestrator.send("thanks")
 
-        assertFalse(model.prefaces.last().instruction.contains("Conversation so far:"))
+        assertFalse(model.prefaces.last().system.contains("Conversation so far:"))
         assertEquals("Call mom", world.tools.list().single().title)
     }
 
@@ -147,9 +147,20 @@ class OrchestratorTest {
         model.replies += "NONE"
         orchestrator.send("never mind")
 
-        val instruction = model.prefaces.last().instruction
-        assertTrue(instruction, "Remind Me: created id 1 Call mom, Thu 19 Nov 09:00, once (undone by you)" in instruction)
-        assertTrue(instruction, "Tasks:\n- (none)" in instruction)
+        val system = model.prefaces.last().system
+        assertTrue(system, "Remind Me: created id 1 Call mom, Thu 19 Nov 09:00, once (undone by you)" in system)
+        assertTrue(system, "Tasks:\n- (none)" in system)
+    }
+
+    @Test
+    fun `an undo the app refuses is not told to the model as undone`() {
+        model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
+        val card = orchestrator.send("call mom thursday at 9").cards.single()
+        world.tools.delete(card.task!!.id)
+
+        assertTrue(orchestrator.undo(card) is ToolResult.Refused)
+        assertFalse(orchestrator.conversation(), "undone by you" in orchestrator.conversation())
+        assertTrue(orchestrator.conversation(), "(you deleted it)" in orchestrator.conversation())
     }
 
     @Test
@@ -160,7 +171,7 @@ class OrchestratorTest {
         world.tools.update(task.id, TaskDetails(task.title, at("2026-11-20T09:00"), task.style, task.leadTimes, task.repeat))
 
         assertTrue(orchestrator.conversation(), "created id 1 Call mom, Thu 19 Nov 09:00, once (you changed it to Call mom, Fri 20 Nov 09:00, once)" in orchestrator.conversation())
-        assertTrue(orchestrator.preface().instruction.contains("- id 1: Call mom | due Fri 2026-11-20 09:00"))
+        assertTrue(orchestrator.preface().system.contains("- id 1: Call mom | due Fri 2026-11-20 09:00"))
     }
 
     @Test
@@ -174,7 +185,7 @@ class OrchestratorTest {
     }
 
     @Test
-    fun `a task the model changes later is not marked as changed by the owner`() {
+    fun `a task the model changes later is not marked as changed by the user`() {
         model.replies += reply(call("create_task", "title" to "Call mom", "when" to "tomorrow at 6"))
         orchestrator.send("call mom tomorrow at 6")
         model.replies += reply(call("update_task", "id" to "1", "when" to "7"))
@@ -311,11 +322,11 @@ class OrchestratorTest {
 
         assertEquals(listOf("Instruction", "Tools", "Tasks", "Conversation", "Message"), record.parts.map { it.name })
         val preface = model.prefaces.last()
-        assertEquals(preface.instruction, record.parts.filter { it.name in setOf("Instruction", "Tasks", "Conversation") }.joinToString("\n\n") { it.text })
+        assertEquals(preface.system, record.parts.filter { it.name in setOf("Instruction", "Tasks", "Conversation") }.joinToString("\n\n") { it.text })
         assertEquals(preface.tools, record.parts.single { it.name == "Tools" }.text)
         assertEquals(model.said.last(), record.parts.last().text)
         // The fake's exact count: what it read before the reply.
-        val read = model.count(preface.instruction) + model.count(preface.tools) + model.count(model.said.last())
+        val read = model.count(preface.system) + model.count(preface.tools) + model.count(model.said.last())
         assertEquals(read, record.read)
         assertEquals(read, record.parts.sumOf { it.tokens })
         assertEquals(model.count("NONE"), record.written)
@@ -344,7 +355,7 @@ class OrchestratorTest {
         model.replies += "NONE"
         orchestrator.send("thanks")
 
-        assertTrue("Conversation so far:" in model.prepared.single().instruction)
+        assertTrue("Conversation so far:" in model.prepared.single().system)
         assertEquals(model.prepared.single(), model.prefaces.last())
     }
 
@@ -454,7 +465,7 @@ class FakeModel(override var contextTokens: Int = 4096) : ModelPort {
     override fun open(preface: Preface): Talk {
         prefaces += preface
         opened++
-        var read = count(preface.instruction) + count(preface.tools)
+        var read = count(preface.system) + count(preface.tools)
         return object : Talk {
             override fun say(text: String, onText: (String) -> Unit): ModelReply {
                 said += text

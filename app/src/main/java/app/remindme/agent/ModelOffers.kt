@@ -6,7 +6,7 @@ import com.google.gson.JsonParser
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** A model file the owner can download: where it is on Hugging Face and what the Models screen says about it. See GLOSSARY.md. */
+/** A model file the user can download: where it is on Hugging Face and what the Models screen says about it. See GLOSSARY.md. */
 data class ModelOffer(
     val repo: String,
     val file: String,
@@ -15,7 +15,7 @@ data class ModelOffer(
     /** Tokens of context; null when neither the list nor the file name says. */
     val context: Int?,
     val licence: String?,
-    /** True only for a model Remind Me has been run with on the owner's phone and whose tool calls it reads. */
+    /** True only for a model Remind Me has been run with on the user's phone and whose tool calls it reads. */
     val tried: Boolean,
 ) {
     /** Hugging Face sends this to a freshly signed link on every request, so a resumed download never meets an expired one. */
@@ -56,6 +56,9 @@ object ModelOffers {
 
     /** Tokens of context written into a LiteRT-LM file name as `ekv2048`, or null. */
     fun contextIn(file: String): Int? = Regex("ekv(\\d{3,6})").find(file)?.groupValues?.get(1)?.toIntOrNull()
+
+    /** The context size of a model file: from its name, else as its offer lists it; null when neither says. */
+    fun contextOf(file: String): Int? = contextIn(file) ?: BUILT_IN.firstOrNull { it.file == file }?.context
 
     /**
      * The ungated repositories in a Hub listing (`/api/models?filter=litert-lm&expand[]=gated&expand[]=siblings…`)

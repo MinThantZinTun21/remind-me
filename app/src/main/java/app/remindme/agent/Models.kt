@@ -39,7 +39,7 @@ class Models(context: Context) {
     }
 
     /**
-     * The file the agent loads, or null when there is none to use. Until the owner chooses, that is the newest
+     * The file the agent loads, or null when there is none to use. Until the user chooses, that is the newest
      * file on the phone, as in agent build 1. Once they have chosen, it is that file only: after they delete it,
      * the agent has none until they choose another. A model whose replies Remind Me cannot read is never used.
      */
@@ -81,7 +81,7 @@ class Models(context: Context) {
         ModelDownloadJob.schedule(context, offer)
     }
 
-    /** The model's name as the owner saw it when downloading, or the file name. */
+    /** The model's name as the user saw it when downloading, or the file name. */
     fun nameOf(fileName: String): String = prefs.getString(NAME + fileName, null) ?: fileName
 
     /** Where a download stands. */
@@ -109,7 +109,7 @@ class Models(context: Context) {
 
     /** Stops a download and throws away what it had fetched. Logged, so a download that vanished can be explained. */
     fun cancel(fileName: String) {
-        Log.i(TAG, "Download of $fileName cancelled by the owner")
+        Log.i(TAG, "Download of $fileName cancelled by the user")
         ModelDownloadJob.cancel(context, fileName)
         forget(fileName)
         folder?.let { File(it, fileName + PART).delete() }
@@ -138,7 +138,7 @@ class Models(context: Context) {
 
     internal fun madeProgress(fileName: String) = prefs.edit().putInt(FAILURES + fileName, 0).apply()
 
-    /** False once the owner has cancelled: the job then stops and leaves nothing behind. */
+    /** False once the user has cancelled: the job then stops and leaves nothing behind. */
     internal fun isTracked(fileName: String): Boolean = prefs.contains(STATE + fileName)
 
     /** The part file is complete: rename it into place, so the agent can use it. */
@@ -163,7 +163,7 @@ class Models(context: Context) {
 
     /**
      * Downloads started through Android's download service by the first Models build: that service stalled on
-     * this phone, so they are stopped and their parts removed. The owner downloads again.
+     * this phone, so they are stopped and their parts removed. The user downloads again.
      */
     private fun forgetOldDownloads() {
         val old = prefs.all.filter { it.key.startsWith(OLD_KEY) }

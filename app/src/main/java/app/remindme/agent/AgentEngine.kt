@@ -9,6 +9,8 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
@@ -23,7 +25,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * The model on the phone, chosen on the Models screen (LFM3-1.7B unless the owner picks another), run by
+ * The model on the phone, chosen on the Models screen (LFM3-1.7B unless the user picks another), run by
  * LiteRT-LM on the CPU, fully offline.
  *
  * The model is loaded when the user opens the agent screen and dropped when they leave it; it never runs
@@ -34,7 +36,7 @@ import java.util.concurrent.TimeUnit
  */
 class AgentEngine(private val modelFile: File, private val cacheDir: File) : ModelPort {
 
-    override val contextTokens: Int = ModelOffers.contextIn(modelFile.name) ?: DEFAULT_CONTEXT
+    override val contextTokens: Int = ModelOffers.contextOf(modelFile.name) ?: DEFAULT_CONTEXT
 
     private var engine: Engine? = null
     private var conversation: Conversation? = null
@@ -54,13 +56,14 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
     private fun load(preface: Preface) {
         closeEngine()
         val started = SystemClock.elapsedRealtime()
+        enableCounts()
         val loading = Engine(EngineConfig(modelPath = modelFile.path, backend = Backend.CPU(), cacheDir = cacheDir.path))
         try {
             loading.initialize()
             val loaded = SystemClock.elapsedRealtime()
             conversation = loading.createConversation(
                 ConversationConfig(
-                    systemInstruction = Contents.of(preface.instruction),
+                    systemInstruction = Contents.of(preface.system),
                     samplerConfig = GREEDY,
                     automaticToolCalling = false,
                     tools = toolsOf(preface.tools),
@@ -132,6 +135,8 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
         failure?.let { throw IllegalStateException(it.message, it) }
         val finished = SystemClock.elapsedRealtime()
         val tokens = runCatching { talking.getTokenCount() }.getOrDefault(-1)
+        // The runtime's own count of the tokens it wrote; one per text piece when it has none.
+        decodedBy(talking)?.let { written = it }
         val first = if (firstAt == 0L) finished - started else firstAt - started
         Log.i(TAG, "reply in ${finished - started} ms, first token after $first ms, $tokens tokens in context")
         // Calls the runtime read show in the context view as the model meant them.
@@ -139,6 +144,17 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
         Log.i(TAG, "reply: $reply")
         return ModelReply(reply.toString(), tokens, written, first, finished - started, calls.takeIf { it.isNotEmpty() })
     }
+
+    /** Has the runtime count what it writes, for the context view's "wrote". */
+    @OptIn(ExperimentalApi::class)
+    private fun enableCounts() {
+        runCatching { ExperimentalFlags.enableBenchmark = true }
+    }
+
+    /** How many tokens the runtime says it wrote for the last reply; null when it does not say. */
+    @OptIn(ExperimentalApi::class)
+    private fun decodedBy(talking: Conversation): Int? =
+        runCatching { talking.getBenchmarkInfo().lastDecodeTokenCount }.getOrNull()?.takeIf { it > 0 }
 
     private fun callOf(call: com.google.ai.edge.litertlm.ToolCall) = ToolCall(call.name, call.arguments.mapValues { (_, value) -> textOf(value) })
 
@@ -167,7 +183,6 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
         private const val TAG = "RemindMeAgent"
 
         /** Room for about three tool calls and a sentence. */
-        private const val MAX_OUTPUT_TOKENS = Orchestrator.MAX_OUTPUT_TOKENS
         private const val REPLY_TIMEOUT_S = 240L
         private const val STOP_TIMEOUT_S = 10L
 

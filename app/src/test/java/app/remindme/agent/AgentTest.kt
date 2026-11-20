@@ -154,7 +154,7 @@ class AgentTest {
 
     @Test
     fun `a value the app cannot read is refused and nothing is created`() {
-        assertEquals("The app cannot read when \"whenever\".", act("create_task", "title" to "x", "when" to "whenever").refusal)
+        assertEquals("Remind Me can't read when 'whenever'.", act("create_task", "title" to "x", "when" to "whenever").refusal)
         assertEquals(
             "Remind Me can't read the warning 'the morning of' — set it by hand.",
             act("create_task", "title" to "x", "when" to "tomorrow at 9", "warn" to "the morning of").refusal,

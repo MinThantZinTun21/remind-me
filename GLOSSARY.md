@@ -72,6 +72,10 @@ _Avoid_: LLM, AI, brain, engine (the engine is what runs a model)
 The messages the user and the agent exchange while the agent screen is open; the agent remembers it until the user leaves the screen.
 _Avoid_: Chat, session, history (history is done tasks)
 
+**Exchange**:
+One message the user sent in the conversation and what came of it: the action cards, or why nothing was done.
+_Avoid_: Turn, round, request
+
 **Tool**:
 A function the app offers the agent for acting on tasks; the agent's only way to change anything.
 _Avoid_: Function, command, API

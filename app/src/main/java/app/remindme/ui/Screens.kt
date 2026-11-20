@@ -111,7 +111,6 @@ fun RemindMeScreens(app: RemindMeApp, taskToOpen: MutableState<Long?>, modelsToO
             is Screen.Agent -> AgentScreen(
                 app,
                 draft = current.draft,
-                onEditTask = { screen = Screen.EditTask(it) },
                 onModels = { screen = Screen.Models },
                 onClose = { screen = Screen.Home },
             )

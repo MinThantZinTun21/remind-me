@@ -29,19 +29,22 @@ data class ActionCard(
     val undo: Undo?,
     /** For a [Action.SHOW] card, the tasks it lists, soonest first. */
     val listed: List<Task> = emptyList(),
-    /** For a [Action.SHOW] card, the range it lists in words, like "Friday" or "all". */
-    val range: String? = null,
+    /** For a [Action.SHOW] card, the range it lists. */
+    val range: WordReader.Range? = null,
 ) {
     enum class Action { CREATE, UPDATE, DELETE, COMPLETE, SNOOZE, SHOW, UNKNOWN }
 
     val went: Boolean get() = refusal == null
+
+    /** A card that lists tasks rather than reporting a change to one. */
+    val lists: Boolean get() = action == Action.SHOW && went
 }
 
 sealed interface Undo {
     /** Takes away the task the agent created. */
     data class Remove(val taskId: Long) : Undo
 
-    /** Puts a task back as it was before the agent changed, deleted, completed or snoozed it. */
+    /** Puts a task back as it was before the agent changed, deleted, marked done or snoozed it. */
     data class PutBack(val task: Task) : Undo
 }
 
@@ -107,7 +110,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         "complete_task" -> onExisting(call, visible, ActionCard.Action.COMPLETE) { before -> tools.done(before.id) }
         "snooze_task" -> onExisting(call, visible, ActionCard.Action.SNOOZE) { before -> tools.snoozeFor(before.id, snooze(call.args["for"], message)) }
         "show_tasks" -> show(call, message)
-        else -> ActionCard(call, ActionCard.Action.UNKNOWN, null, "The app has no tool called \"${call.name}\".", null)
+        else -> refused(call, ActionCard.Action.UNKNOWN, "The app has no tool called \"${call.name}\".")
     }
 
     private fun create(call: ToolCall, message: String?): ActionCard {
@@ -119,17 +122,17 @@ class Agent(private val tools: Tools, private val clock: Clock) {
             val repeat = repeat(call.args["repeat"], message, due.toLocalDate())
             TaskDetails(
                 title = title,
-                due = repeat?.on?.let { due.with(TemporalAdjusters.nextOrSame(it)) } ?: due,
+                due = due.onTheDayOf(repeat),
                 style = style,
                 leadTimes = warn(warnWords(call.args), message).orEmpty(),
                 repeat = repeat?.rule ?: if (repeat == null) RepeatRule.ONCE else throw Unreadable(cantRepeat(call.args["repeat"].orEmpty())),
             )
         } catch (unreadable: Unreadable) {
-            return ActionCard(call, action, null, unreadable.message, null)
+            return refused(call, action, unreadable.message)
         }
         return when (val result = tools.create(details)) {
             is ToolResult.Ok -> ActionCard(call, action, result.task, null, Undo.Remove(result.task.id))
-            is ToolResult.Refused -> ActionCard(call, action, null, result.reason, null)
+            is ToolResult.Refused -> refused(call, action, result.reason)
         }
     }
 
@@ -141,10 +144,10 @@ class Agent(private val tools: Tools, private val clock: Clock) {
             if (words.lowercase() !in ALL_TASKS) copied(words, message, "the range")
             WordReader.range(words, clock.now()) ?: throw Unreadable("Remind Me can't show tasks for '$words'.")
         } catch (unreadable: Unreadable) {
-            return ActionCard(call, action, null, unreadable.message, null)
+            return refused(call, action, unreadable.message)
         }
-        val listed = tools.list().filter { range.holds(it.due) }.sortedBy { it.due }
-        return ActionCard(call, action, null, null, null, listed, range.label)
+        val listed = tools.dueBetween(range.from, range.to)
+        return ActionCard(call, action, null, null, null, listed, range)
     }
 
     /** Only what the call gives changes; everything else stays as the task has it. */
@@ -156,7 +159,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         val asItWas = TaskDetails(before.title, before.due, before.style, before.leadTimes, before.repeat)
         val wanted = asItWas.copy(
             title = args["title"]?.takeIf { it.isNotBlank() } ?: before.title,
-            due = (due ?: before.due).let { moved -> repeat?.on?.let { moved.with(TemporalAdjusters.nextOrSame(it)) } ?: moved },
+            due = (due ?: before.due).onTheDayOf(repeat),
             style = style,
             leadTimes = warn(warnWords(args), message) ?: before.leadTimes,
             repeat = repeat?.rule ?: repeat?.until?.let { before.repeat.copy(until = it) } ?: before.repeat,
@@ -169,19 +172,27 @@ class Agent(private val tools: Tools, private val clock: Clock) {
     private fun onExisting(call: ToolCall, visible: Set<Long>?, action: ActionCard.Action, change: (Task) -> ToolResult): ActionCard {
         val idText = call.args["id"].orEmpty()
         val id = idText.trim().toLongOrNull()
-        if (visible != null && id !in visible) return ActionCard(call, action, null, NOT_FOUND, null)
+        if (visible != null && id !in visible) return refused(call, action, NOT_FOUND)
         val before = id?.let { tools.list().firstOrNull { it.id == id } }
-            ?: return ActionCard(call, action, null, "There is no task with id \"$idText\" on the list.", null)
+            ?: return refused(call, action, "There is no task with id \"$idText\" on the list.")
         val result = try {
             change(before)
         } catch (unreadable: Unreadable) {
-            return ActionCard(call, action, before, unreadable.message, null)
+            return refused(call, action, unreadable.message, before)
         }
         return when (result) {
             is ToolResult.Ok -> ActionCard(call, action, result.task, null, Undo.PutBack(before))
-            is ToolResult.Refused -> ActionCard(call, action, before, result.reason, null)
+            is ToolResult.Refused -> refused(call, action, result.reason, before)
         }
     }
+
+    /** A card for a call that changed nothing, and why. */
+    private fun refused(call: ToolCall, action: ActionCard.Action, reason: String, task: Task? = null) =
+        ActionCard(call, action, task, reason, null)
+
+    /** A task that repeats on a weekday is first due on the next one. */
+    private fun LocalDateTime.onTheDayOf(repeat: WordReader.RepeatWords?): LocalDateTime =
+        repeat?.on?.let { with(TemporalAdjusters.nextOrSame(it)) } ?: this
 
     private class Unreadable(override val message: String) : Exception(message)
 
@@ -193,7 +204,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         val given = words.orEmpty()
         copied(given, message, "when")
         return WordReader.due(given, clock.now(), style == DeliveryStyle.ALARM, keep)
-            ?: throw Unreadable("The app cannot read when \"$given\".")
+            ?: throw Unreadable("Remind Me can't read when '$given'.")
     }
 
     /** The style the call asks for; an alarm the user's [message] does not ask for in so many words is dropped. */
@@ -201,7 +212,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         null, "" -> null
         "notification" -> DeliveryStyle.NOTIFICATION
         "alarm" -> DeliveryStyle.ALARM.takeIf { message == null || WordReader.asksForAlarm(message) }
-        else -> throw Unreadable("The app cannot read the delivery style \"$text\".")
+        else -> throw Unreadable("Remind Me can't read the delivery style '$text'.")
     }
 
     /** The user's words for an early warning; `warn_before` is what the first tool contract called it. */

@@ -1,12 +1,19 @@
 package app.remindme.agent
 
+import app.remindme.core.ToolResult
 import app.remindme.core.Tools
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** What the model reads before any message: the instruction (rules, tasks, conversation so far) and the tools. */
-data class Preface(val instruction: String, val tools: String)
+/**
+ * What the model reads before any message: the system text the runtime takes (the instruction, the tasks shown and
+ * the conversation so far) and the tools.
+ */
+data class Preface(val system: String, val tools: String)
+
+/** What the model may write, kept free in its context; the engine's output limit. */
+const val MAX_OUTPUT_TOKENS = 320
 
 /** One reply from the model, and what the runtime counted while writing it. */
 data class ModelReply(
@@ -63,11 +70,11 @@ data class ContextRecord(
 /** The second attempt: what the app told the model, and what the model wrote back. */
 data class Retry(val reason: String, val output: String)
 
-/** One message the owner sent and what came of it. See GLOSSARY.md. */
+/** One message the user sent and what came of it. See GLOSSARY.md. */
 data class Exchange(
     val words: String,
     val cards: List<ActionCard>,
-    /** What to tell the owner when nothing was done; null when the reply had calls the app could read. */
+    /** What to tell the user when nothing was done; null when the reply had calls the app could read. */
     val problem: String?,
     /** The model's reply as written; null when the model failed before replying. */
     val reply: ModelReply?,
@@ -81,9 +88,9 @@ data class Exchange(
 class Orchestrator(private val agent: Agent, private val tools: Tools, private val model: ModelPort) {
 
     // The screen undoes cards on the main thread while a message may be running on the model's thread.
-    private val history = CopyOnWriteArrayList<Exchange>()
+    private val exchanges = CopyOnWriteArrayList<Exchange>()
 
-    /** Cards the owner took back during this visit. */
+    /** Cards the user took back during this visit. */
     private val undone: MutableSet<ActionCard> = Collections.synchronizedSet(Collections.newSetFromMap(IdentityHashMap()))
 
     /** What the model reads before the next message, for a message of usual length. */
@@ -100,12 +107,12 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         val budget = model.contextTokens - MAX_OUTPUT_TOKENS - maxOf(estimate(message), MESSAGE_ALLOWANCE)
         val fixed = estimate(agent.rules()) + estimate(Agent.TOOLS_JSON)
         val touched = touched()
-        var exchanges = history.toList()
+        var kept = exchanges.toList()
         var tasks = tools.list()
         val allTasks = tasks.size
-        fun conversation() = conversationOf(exchanges).takeIf { it.isNotEmpty() }?.let { "Conversation so far:\n$it" }
+        fun conversation() = conversationOf(kept).takeIf { it.isNotEmpty() }?.let { "Conversation so far:\n$it" }
         fun size() = fixed + estimate(agent.taskList(tasks)) + (conversation()?.let(::estimate) ?: 0)
-        while (size() > budget && exchanges.isNotEmpty()) exchanges = exchanges.drop(1)
+        while (size() > budget && kept.isNotEmpty()) kept = kept.drop(1)
         while (size() > budget) {
             val leaving = tasks.lastOrNull { it.id !in touched } ?: break
             tasks = tasks - leaving
@@ -117,14 +124,14 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
             conversation()?.let { part("Conversation", it) },
         )
         val leftOut = listOfNotNull(
-            counted(history.size - exchanges.size, "earlier exchange", "earlier exchanges"),
+            counted(exchanges.size - kept.size, "earlier exchange", "earlier exchanges"),
             counted(allTasks - tasks.size, "task", "tasks"),
         ).joinToString(", ").ifEmpty { null }
         return Fit(parts, tasks.map { it.id }.toSet(), leftOut)
     }
 
     /** The tasks this conversation created, changed or showed: they stay in the task list whatever else is cut. */
-    private fun touched(): Set<Long> = history.flatMap { it.cards }.flatMap { card -> listOfNotNull(card.task?.id) + card.listed.map { it.id } }.toSet()
+    private fun touched(): Set<Long> = exchanges.flatMap { it.cards }.flatMap { card -> listOfNotNull(card.task?.id) + card.listed.map { it.id } }.toSet()
 
     private fun counted(n: Int, one: String, many: String) = when (n) {
         0 -> null
@@ -133,14 +140,14 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     }
 
     private fun prefaceOf(parts: List<ContextPart>) = Preface(
-        instruction = parts.filter { it.name in INSTRUCTION_PARTS }.joinToString("\n\n") { it.text },
+        system = parts.filter { it.name in SYSTEM_PARTS }.joinToString("\n\n") { it.text },
         tools = parts.single { it.name == "Tools" }.text,
     )
 
-    /** Has the model read the next message's preface while the owner types. */
+    /** Has the model read the next message's preface while the user types. */
     fun prepare() = model.prepare(preface())
 
-    /** Sends the owner's [words] and returns what came of them. Blocks until the model has replied. */
+    /** Sends the user's [words] and returns what came of them. Blocks until the model has replied. */
     fun send(words: String, onText: (String) -> Unit = {}): Exchange {
         val message = agent.userMessage(words)
         val fit = fit(message)
@@ -164,7 +171,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         } catch (failure: Exception) {
             Exchange(words, emptyList(), "The model stopped: ${failure.message}", null, record(parts, null, fit.leftOut))
         }
-        history += exchange
+        exchanges += exchange
         return exchange
     }
 
@@ -173,7 +180,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         val none: Boolean get() = parsed.calls.isEmpty() && parsed.problem == null && parsed.answer.trim().trimEnd('.').equals("NONE", ignoreCase = true)
     }
 
-    /** Says [text] to the model and carries out the calls in its reply, which answer the owner's [words]. */
+    /** Says [text] to the model and carries out the calls in its reply, which answer the user's [words]. */
     private fun attempt(talk: Talk, text: String, words: String, shown: Set<Long>, onText: (String) -> Unit): Attempt {
         val reply = talk.say(text, onText)
         // The runtime reads the calls of the model types it knows; Remind Me's own reader reads the rest.
@@ -219,23 +226,23 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
 
     private fun estimate(text: String) = (text.length + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
 
-    /** Takes back what [card] reports, and tells the model so with the next message. */
-    fun undo(card: ActionCard) = agent.undo(card).also { undone += card }
+    /** Takes back what [card] reports, and tells the model so with the next message; a refused undo changes nothing. */
+    fun undo(card: ActionCard): ToolResult? = agent.undo(card).also { if (it is ToolResult.Ok) undone += card }
 
-    /** The owner left the agent screen or changed the model: the next message starts afresh. */
+    /** The user left the agent screen or changed the model: the next message starts afresh. */
     fun endVisit() {
-        history.clear()
+        exchanges.clear()
         undone.clear()
     }
 
-    /** The conversation so far, a line for the owner's words and one for each card. */
-    fun conversation(): String = conversationOf(history)
+    /** The conversation so far, a line for the user's words and one for each card. */
+    fun conversation(): String = conversationOf(exchanges)
 
-    private fun conversationOf(exchanges: List<Exchange>): String {
-        // Only the newest card on a task can have been overtaken by the owner's own change since.
+    private fun conversationOf(shown: List<Exchange>): String {
+        // Only the newest card on a task can have been overtaken by the user's own change since.
         val newest: MutableSet<ActionCard> = Collections.newSetFromMap(IdentityHashMap())
-        history.flatMap { it.cards }.filter { it.went && it.task != null }.associateBy { it.task!!.id }.values.forEach { newest += it }
-        return exchanges.joinToString("\n") { exchange -> lines(exchange, newest) }
+        exchanges.flatMap { it.cards }.filter { it.went && it.task != null }.associateBy { it.task!!.id }.values.forEach { newest += it }
+        return shown.joinToString("\n") { exchange -> lines(exchange, newest) }
     }
 
     private fun lines(exchange: Exchange, newest: Set<ActionCard>): String {
@@ -245,7 +252,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         return (listOf("User: ${exchange.words}") + lines.map { "Remind Me: $it" }).joinToString("\n")
     }
 
-    /** What the owner did to the card's task after the card: took it back, or changed the task by hand. */
+    /** What the user did to the card's task after the card: took it back, or changed the task by hand. */
     private fun afterwards(card: ActionCard, newest: Boolean): String {
         if (card in undone) return " (undone by you)"
         val task = card.task ?: return ""
@@ -256,7 +263,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     }
 
     private fun line(card: ActionCard): String {
-        if (card.action == ActionCard.Action.SHOW && card.went) return shown(card)
+        if (card.lists) return shown(card)
         val task = card.task
         if (!card.went || task == null) return "could not ${verb(card)}: ${card.refusal}"
         return when (card.action) {
@@ -272,7 +279,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
 
     /** "showed 2 tasks for Friday: ids 4, 7", or "in all" for every task. */
     private fun shown(card: ActionCard): String {
-        val range = if (card.range == "all") "in all" else "for ${card.range}"
+        val range = if (card.range?.all == true) "in all" else "for ${card.range?.label}"
         val ids = card.listed.map { it.id }
         if (ids.isEmpty()) return "showed no tasks $range"
         val count = if (ids.size == 1) "1 task" else "${ids.size} tasks"
@@ -294,18 +301,16 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         private const val NO_USABLE_CALL = "The agent wrote nothing the app could use. Try saying it another way."
         private const val NO_CALL = "Your reply had no tool call."
 
-        /** What the model may write, kept free in its context. Matches the engine's output limit. */
-        const val MAX_OUTPUT_TOKENS = 320
-
-        /** Room kept for the message when the context is fitted before the owner has typed it. */
+        /** Room kept for the message when the context is fitted before the user has typed it. */
         private const val MESSAGE_ALLOWANCE = 64
 
         /** About how many characters make a token, for sizing the parts of the context. */
         private const val CHARS_PER_TOKEN = 4
 
-        /** The parts that make up the instruction, in the order the model reads them. */
+        /** The cards whose task the user may have changed by hand since. */
         private val CHANGING = setOf(ActionCard.Action.CREATE, ActionCard.Action.UPDATE)
 
-        private val INSTRUCTION_PARTS = setOf("Instruction", "Tasks", "Conversation")
+        /** The context parts that go into the system text, kept in the order the context lists them. */
+        private val SYSTEM_PARTS = setOf("Instruction", "Tasks", "Conversation")
     }
 }
