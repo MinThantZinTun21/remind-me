@@ -22,9 +22,12 @@ class Models(context: Context) {
     /** The app's own folder on shared storage: where downloads land and where a USB copy goes. */
     val folder: File? get() = context.getExternalFilesDir(null)
 
-    /** A finished model file on the phone. */
-    data class Installed(val file: File, val downloaded: Boolean) {
+    /** A finished model file on the phone, with the model type it names (see [ModelType]). */
+    data class Installed(val file: File, val downloaded: Boolean, val type: String? = ModelType.of(file)) {
         val bytes: Long get() = file.length()
+
+        /** False for a model whose replies Remind Me cannot read: it cannot be chosen, only deleted. */
+        val readable: Boolean get() = ModelType.readable(type)
     }
 
     /** The finished model files, newest first. */
@@ -38,11 +41,11 @@ class Models(context: Context) {
     /**
      * The file the agent loads, or null when there is none to use. Until the owner chooses, that is the newest
      * file on the phone, as in agent build 1. Once they have chosen, it is that file only: after they delete it,
-     * the agent has none until they choose another.
+     * the agent has none until they choose another. A model whose replies Remind Me cannot read is never used.
      */
     fun inUse(): File? {
         val chosen = prefs.getString(IN_USE, null)
-        val files = installed()
+        val files = installed().filter { it.readable }
         return if (chosen == null) files.firstOrNull()?.file else files.firstOrNull { it.file.name == chosen }?.file
     }
 

@@ -34,7 +34,7 @@ object ModelOffers {
     /** The file in use since agent build 1, the one model the app is known to read. */
     const val TRIED_FILE = "LFM3-1.7B_mixed_int4_ekv2048.litertlm"
 
-    /** Models known to run on LiteRT-LM 0.18.1 that say they make tool calls; sizes read from the Hub on 2026-11-19. */
+    /** Models known to run on LiteRT-LM 0.19.1 that say they make tool calls; sizes read from the Hub on 2026-11-19. */
     val BUILT_IN = listOf(
         ModelOffer("litert-community/LFM3-1.7B-LiteRT", TRIED_FILE, "LFM3 1.7B", 1_442_000_000, 2048, "LFM Open License", tried = true),
         ModelOffer("litert-community/Qwen3-0.6B", "Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm", "Qwen3 0.6B", 343_000_000, 4096, "Apache 2.0", tried = false),

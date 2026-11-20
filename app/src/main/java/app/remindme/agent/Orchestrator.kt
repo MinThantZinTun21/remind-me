@@ -16,6 +16,8 @@ data class ModelReply(
     val tokensWritten: Int = 0,
     val firstTokenMs: Long = 0,
     val totalMs: Long = 0,
+    /** The calls the runtime read out of the reply itself, for a model type it knows; null when it read none. */
+    val calls: List<ToolCall>? = null,
 )
 
 /**
@@ -174,7 +176,8 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     /** Says [text] to the model and carries out the calls in its reply, which answer the owner's [words]. */
     private fun attempt(talk: Talk, text: String, words: String, shown: Set<Long>, onText: (String) -> Unit): Attempt {
         val reply = talk.say(text, onText)
-        val parsed = ReplyParser.parse(reply.text)
+        // The runtime reads the calls of the model types it knows; Remind Me's own reader reads the rest.
+        val parsed = reply.calls?.takeIf { it.isNotEmpty() }?.let { ParsedReply(it, "", null) } ?: ReplyParser.parse(reply.text)
         return Attempt(reply, parsed, agent.act(parsed.calls, shown, words))
     }
 

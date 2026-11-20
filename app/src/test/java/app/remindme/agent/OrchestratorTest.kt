@@ -32,6 +32,18 @@ class OrchestratorTest {
     }
 
     @Test
+    fun `calls the runtime read itself become cards, whatever the reply's text`() {
+        model.replies += "create_task(title=\"Call mom\", when=\"thursday at 9\")"
+        model.runtimeCalls += listOf(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
+
+        val exchange = orchestrator.send("call mom thursday at 9")
+
+        assertTrue(exchange.cards.single().went)
+        assertEquals(at("2026-11-19T09:00"), world.tools.list().single().due)
+        assertEquals(null, exchange.problem)
+    }
+
+    @Test
     fun `the next message's context holds the earlier words and one line per card, not the raw calls`() {
         model.replies += reply(call("create_task", "title" to "Call mom", "when" to "thursday at 9"))
         orchestrator.send("call mom thursday at 9")
@@ -351,6 +363,9 @@ class OrchestratorTest {
 /** A model that answers from a script and remembers what it was given. */
 class FakeModel(override var contextTokens: Int = 4096) : ModelPort {
     val replies = ArrayDeque<String>()
+
+    /** Calls the runtime read out of each reply itself, in step with [replies]; none for a reply with no entry. */
+    val runtimeCalls = ArrayDeque<List<ToolCall>>()
     val prefaces = mutableListOf<Preface>()
     val said = mutableListOf<String>()
     val prepared = mutableListOf<Preface>()
@@ -376,7 +391,7 @@ class FakeModel(override var contextTokens: Int = 4096) : ModelPort {
                 said += text
                 val answer = replies.removeFirstOrNull() ?: error("the fake model has no reply left for \"$text\"")
                 read += count(text) + count(answer)
-                return ModelReply(answer, tokensInContext = if (exact) read else -1, tokensWritten = count(answer))
+                return ModelReply(answer, tokensInContext = if (exact) read else -1, tokensWritten = count(answer), calls = runtimeCalls.removeFirstOrNull())
             }
 
             override fun close() {

@@ -12,8 +12,11 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.OpenApiTool
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
+import com.google.ai.edge.litertlm.ToolProvider
+import com.google.ai.edge.litertlm.tool
 import com.google.gson.JsonParser
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -60,7 +63,7 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
                     systemInstruction = Contents.of(preface.instruction),
                     samplerConfig = GREEDY,
                     automaticToolCalling = false,
-                    extraContext = mapOf("tools" to JsonParser.parseString(preface.tools).asJsonArray),
+                    tools = toolsOf(preface.tools),
                     prefillPrefaceOnInit = true,
                     maxOutputToken = MAX_OUTPUT_TOKENS,
                     thinkingConfig = NO_THINKING,
@@ -97,6 +100,7 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
         val started = SystemClock.elapsedRealtime()
         var firstAt = 0L
         var written = 0
+        val calls = mutableListOf<ToolCall>()
         var failure: Throwable? = null
         val done = CountDownLatch(1)
         talking.sendMessageAsync(
@@ -106,6 +110,7 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
                     if (firstAt == 0L) firstAt = SystemClock.elapsedRealtime()
                     written++
                     for (content in message.contents.contents) if (content is Content.Text) reply.append(content.text)
+                    calls += message.toolCalls.map(::callOf)
                     onText(reply.toString())
                 }
 
@@ -129,9 +134,22 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
         val tokens = runCatching { talking.getTokenCount() }.getOrDefault(-1)
         val first = if (firstAt == 0L) finished - started else firstAt - started
         Log.i(TAG, "reply in ${finished - started} ms, first token after $first ms, $tokens tokens in context")
+        // Calls the runtime read show in the context view as the model meant them.
+        calls.forEach { reply.append(if (reply.isEmpty()) "" else "\n").append(spelled(it)) }
         Log.i(TAG, "reply: $reply")
-        return ModelReply(reply.toString(), tokens, written, first, finished - started)
+        return ModelReply(reply.toString(), tokens, written, first, finished - started, calls.takeIf { it.isNotEmpty() })
     }
+
+    private fun callOf(call: com.google.ai.edge.litertlm.ToolCall) = ToolCall(call.name, call.arguments.mapValues { (_, value) -> textOf(value) })
+
+    /** An argument as the agent reads it: a whole number without ".0", which is how JSON numbers arrive. */
+    private fun textOf(value: Any?): String = when (value) {
+        null -> ""
+        is Number -> value.toDouble().let { if (it == Math.floor(it) && !it.isInfinite()) it.toLong().toString() else it.toString() }
+        else -> value.toString()
+    }
+
+    private fun spelled(call: ToolCall) = call.name + call.args.entries.joinToString(", ", "(", ")") { (name, value) -> "$name=\"$value\"" }
 
     /** Drops the model. */
     @Synchronized
@@ -162,6 +180,18 @@ class AgentEngine(private val modelFile: File, private val cacheDir: File) : Mod
 
         /** The model file chosen on the Models screen, or null when there is none to use. */
         fun modelFile(context: Context): File? = Models(context).inUse()
+
+        /**
+         * The tools, given to the runtime so each model sees them in its own trained form. Automatic tool
+         * calling is off, so the runtime hands the calls back and never runs a tool itself.
+         */
+        private fun toolsOf(json: String): List<ToolProvider> = JsonParser.parseString(json).asJsonArray.map { element ->
+            val function = element.asJsonObject.getAsJsonObject("function").toString()
+            tool(object : OpenApiTool {
+                override fun getToolDescriptionJsonString() = function
+                override fun execute(paramsJsonString: String) = "{}"
+            })
+        }
 
         /** Where the model file goes: the app's own folder on shared storage, which a USB copy can reach. */
         fun modelFolder(context: Context): File? = context.getExternalFilesDir(null)

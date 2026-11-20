@@ -38,7 +38,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
     // The agent's model runtime. 0.18.1 is the version the LFM3-1.7B model file was built and tested for.
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
 
     testImplementation("junit:junit:4.13.2")
 
