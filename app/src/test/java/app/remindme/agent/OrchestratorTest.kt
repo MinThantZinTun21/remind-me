@@ -231,6 +231,42 @@ class OrchestratorTest {
     }
 
     @Test
+    fun `show_tasks lists the tasks in the range, names their ids, and keeps them as touched`() {
+        val a = task("Alpha", "2026-11-18T09:00")
+        task("Bravo", "2026-11-19T09:00")
+        val c = task("Charlie", "2026-11-20T09:00")
+        task("Delta", "2026-11-21T09:00")
+        model.replies += reply(call("show_tasks", "when" to "friday"))
+
+        val card = orchestrator.send("what's on friday").cards.single()
+
+        assertEquals(ActionCard.Action.SHOW, card.action)
+        assertEquals(listOf(c.id), card.listed.map { it.id })
+        assertEquals(null, card.undo)
+        assertTrue(orchestrator.conversation(), "Remind Me: showed 1 task for Friday: id ${c.id}" in orchestrator.conversation())
+
+        val agent = Agent(world.tools, world.clock)
+        val kept = world.tools.list().filter { it.id in setOf(a.id, c.id) }
+        model.contextTokens = contextFor(estimate(agent.taskList(kept)))
+        model.replies += "NONE"
+        val record = orchestrator.send("ok")
+        assertEquals(agent.taskList(kept), record.context.parts.single { it.name == "Tasks" }.text)
+    }
+
+    @Test
+    fun `show_tasks with range words the app cannot read gets the one second attempt`() {
+        task("Alpha", "2026-11-18T09:00")
+        model.replies += reply(call("show_tasks", "when" to "someday"))
+        model.replies += reply(call("show_tasks", "when" to "all"))
+
+        val exchange = orchestrator.send("show me everything someday")
+
+        assertEquals(2, model.said.size)
+        assertEquals(1, exchange.cards.single().listed.size)
+        assertTrue(model.said.last(), "Remind Me can't show tasks for 'someday'." in model.said.last())
+    }
+
+    @Test
     fun `the instruction, the tools and the message are never cut`() {
         task("Alpha", "2026-11-18T09:00")
         model.contextTokens = 100

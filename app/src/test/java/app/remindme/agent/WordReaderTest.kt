@@ -299,4 +299,23 @@ class WordReaderTest {
         assertNull(WordReader.snooze("for a bit", now))
         assertNull(WordReader.snooze("an hour and a day", now))
     }
+
+    @Test
+    fun `the ranges a list of tasks can be shown for`() {
+        fun range(words: String) = WordReader.range(words, now)!!.let { it.from to it.to }
+        val day = { d: String -> at("${d}T00:00") }
+
+        assertEquals(day("2026-11-18") to day("2026-11-19"), range("today"))
+        assertEquals(day("2026-11-19") to day("2026-11-20"), range("tomorrow"))
+        assertEquals(day("2026-11-20") to day("2026-11-21"), range("friday"))
+        assertEquals(day("2026-11-18") to day("2026-11-19"), range("wednesday"))
+        assertEquals(day("2026-11-18") to day("2026-11-23"), range("this week"))
+        assertEquals(day("2026-11-23") to day("2026-11-30"), range("next week"))
+        assertEquals(day("2026-11-18") to day("2026-11-21"), range("the next 3 days"))
+        assertEquals(null to now, range("overdue"))
+        assertEquals(null to null, range("all"))
+        assertEquals("tomorrow", WordReader.range("tomorrow", now)!!.label)
+        assertNull(WordReader.range("someday", now))
+        assertNull(WordReader.range("in the evening", now))
+    }
 }

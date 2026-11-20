@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.Executors
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -25,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
@@ -267,6 +269,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                             if (result !is ToolResult.Refused && (state == ModelState.READY || state == ModelState.LOADING)) load()
                         },
                         onEditTask = onEditTask,
+                        onOpenList = onClose,
                     )
                 }
                 if (state == ModelState.FAILED) {
@@ -346,7 +349,7 @@ internal fun Examples(onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChange) -> Unit, onEditTask: (Long) -> Unit) {
+private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChange) -> Unit, onEditTask: (Long) -> Unit, onOpenList: () -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // What the user said, on the right, as in a conversation.
         Surface(
@@ -374,7 +377,8 @@ private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChan
             return@Column
         }
         for (card in exchange.cards) {
-            ActionCardView(card, onChange = { onChange(card, it) }, onEditTask = onEditTask)
+            if (card.card.action == ActionCard.Action.SHOW && card.card.went) ListCard(card.card, onEditTask, onOpenList)
+            else ActionCardView(card, onChange = { onChange(card, it) }, onEditTask = onEditTask)
         }
         exchange.problem?.let { Problem(it) }
         exchange.timing?.let {
@@ -434,11 +438,61 @@ private fun ActionCardView(state: CardState, onChange: (CardChange) -> Unit, onE
             state.note?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.error, modifier = Modifier.padding(top = 8.dp))
             }
-            if (card.went && !undone) {
+            if (card.went && !undone && card.action != ActionCard.Action.SHOW) {
                 Row(Modifier.align(Alignment.End).padding(top = 4.dp)) {
                     TextButton(onClick = { onChange(CardChange.Undo) }) { Text(if (state.dayChanges.isEmpty()) "Undo" else "Undo day change") }
                     val task = state.task
                     if (task != null && card.action in EDITABLE) TextButton(onClick = { onEditTask(task.id) }) { Text("Edit") }
+                }
+            }
+        }
+    }
+}
+
+/** The tasks a show_tasks call lists: each opens to edit, and a long list ends with a way to the whole list. */
+@Composable
+private fun ListCard(card: ActionCard, onEditTask: (Long) -> Unit, onOpenList: () -> Unit) {
+    val context = LocalContext.current
+    val colors = MaterialTheme.colorScheme
+    val range = if (card.range == "all") "All tasks" else card.range.orEmpty()
+    val count = card.listed.size
+    Card(
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = if (count > LISTED_ROWS) 4.dp else 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.DateRange, contentDescription = null, tint = colors.primary, modifier = Modifier.size(20.dp))
+                Text(
+                    when (count) {
+                        0 -> if (card.range == "all") "No tasks" else "No tasks for $range"
+                        1 -> "$range: 1 task"
+                        else -> "$range: $count tasks"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.primary,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            for (task in card.listed.take(LISTED_ROWS)) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(onClickLabel = "Edit ${task.title}") { onEditTask(task.id) }
+                        .padding(vertical = 10.dp),
+                ) {
+                    Text(task.title, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        listOfNotNull(Times.dateAndTime(context, task.due), task.repeat.inWords(task.firstDue)).joinToString(" · "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+            }
+            if (count > LISTED_ROWS) {
+                TextButton(onClick = onOpenList, modifier = Modifier.align(Alignment.End)) {
+                    Text("and ${count - LISTED_ROWS} more, open the list")
                 }
             }
         }
@@ -494,6 +548,8 @@ private fun Problem(text: String) {
 }
 
 private val CAN_SEND = setOf(ModelState.READY, ModelState.LOADING)
+/** How many tasks a list card shows before it points to the whole list. */
+private const val LISTED_ROWS = 10
 private val EDITABLE = setOf(ActionCard.Action.CREATE, ActionCard.Action.UPDATE)
 
 private fun ActionCard.icon(): ImageVector = when {
@@ -515,6 +571,7 @@ private fun ActionCard.heading(undone: Boolean): String {
         ActionCard.Action.DELETE -> if (went) "Deleted" else "Could not delete this"
         ActionCard.Action.COMPLETE -> if (went) "Marked done" else "Could not mark this done"
         ActionCard.Action.SNOOZE -> if (went) "Snoozed" else "Could not snooze this"
+        ActionCard.Action.SHOW -> if (went) "Showed tasks" else "Could not show tasks"
         ActionCard.Action.UNKNOWN -> "Did nothing"
     }
     return if (undone) "$did, then undone" else did

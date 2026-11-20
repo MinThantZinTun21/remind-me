@@ -172,6 +172,38 @@ object WordReader {
         return tokens(text).any { it in ALARM_WORDS } || Regex("\\b(don'?t|do not) let me miss\\b").containsMatchIn(text)
     }
 
+    /** The tasks a list is shown for: those due from [from] (open when null) up to, not including, [to] (open when null). */
+    data class Range(val from: LocalDateTime?, val to: LocalDateTime?, val label: String) {
+        fun holds(due: LocalDateTime): Boolean = (from == null || due >= from) && (to == null || due < to)
+    }
+
+    /**
+     * The range [words] name, said at [now]: today, tomorrow, a weekday, this week, next week, the next N
+     * days, overdue or all. Null for any other words.
+     */
+    fun range(words: String, now: LocalDateTime): Range? {
+        val tokens = tokens(words).filter { it !in RANGE_FILLERS }
+        val today = now.toLocalDate().atStartOfDay()
+        fun days(from: LocalDateTime, count: Long, label: String) = Range(from, from.plusDays(count), label)
+        val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        val single = tokens.singleOrNull()
+        return when {
+            tokens.isEmpty() || single in setOf("all", "everything") -> Range(null, null, "all")
+            single == "overdue" || single == "late" -> Range(null, now, "overdue")
+            single == "today" -> days(today, 1, "today")
+            single != null && canonical(single).singleOrNull() == "tomorrow" -> days(today.plusDays(1), 1, "tomorrow")
+            single != null && weekday(single) != null -> {
+                val day = weekday(single)!!
+                days(today.with(TemporalAdjusters.nextOrSame(day)), 1, day.name.lowercase().replaceFirstChar(Char::uppercase))
+            }
+            tokens == listOf("this", "week") -> Range(today, monday.plusWeeks(1), "this week")
+            tokens == listOf("next", "week") -> days(monday.plusWeeks(1), 7, "next week")
+            tokens.size == 3 && tokens[0] == "next" && amount(tokens[1]) != null && canonical(tokens[2]).singleOrNull() == "day" ->
+                days(today, amount(tokens[1])!!, "the next ${amount(tokens[1])} days")
+            else -> null
+        }
+    }
+
     /** The words of [words] that are not in [message]: a sign the model worked something out instead of copying. */
     fun notIn(words: String, message: String): List<String> {
         val given = tokens(message).flatMap(::canonical).toSet()
@@ -404,6 +436,7 @@ object WordReader {
     private val REPEAT_FILLERS = setOf("on", "the", "and", "a", "at", "of", "in", "to", "every")
     /** Words that carry no meaning of their own in words for an early warning. */
     private val WARN_FILLERS = setOf("before", "early", "earlier", "ahead", "beforehand", "prior", "in", "advance", "the", "and", "to", "it")
+    private val RANGE_FILLERS = setOf("the", "for", "on", "my", "tasks", "task", "of")
     private val SNOOZE_FILLERS = setOf("for", "another", "more", "again", "snooze", "it")
     private val ALARM_WORDS = setOf("alarm", "alarms", "wake", "waking", "woken", "wakes")
     private val TOKEN = Regex("\\d{1,2}[:.]\\d{2}|\\d{1,2}/\\d{1,2}|\\d+(?:st|nd|rd|th)|\\d+|[a-z]+")

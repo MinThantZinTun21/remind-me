@@ -27,8 +27,12 @@ data class ActionCard(
     val refusal: String?,
     /** How to take the action back; null when nothing changed. */
     val undo: Undo?,
+    /** For a [Action.SHOW] card, the tasks it lists, soonest first. */
+    val listed: List<Task> = emptyList(),
+    /** For a [Action.SHOW] card, the range it lists in words, like "Friday" or "all". */
+    val range: String? = null,
 ) {
-    enum class Action { CREATE, UPDATE, DELETE, COMPLETE, SNOOZE, UNKNOWN }
+    enum class Action { CREATE, UPDATE, DELETE, COMPLETE, SNOOZE, SHOW, UNKNOWN }
 
     val went: Boolean get() = refusal == null
 }
@@ -81,7 +85,11 @@ class Agent(private val tools: Tools, private val clock: Clock) {
     fun act(calls: List<ToolCall>, shown: Set<Long>? = null, message: String? = null): List<ActionCard> {
         val visible = shown?.toMutableSet()
         return calls.map { call ->
-            act(call, visible, message).also { card -> if (card.action == ActionCard.Action.CREATE) card.task?.let { visible?.add(it.id) } }
+            act(call, visible, message).also { card ->
+                if (card.action == ActionCard.Action.CREATE) card.task?.let { visible?.add(it.id) }
+                // A task the agent has just listed is one it may name next.
+                card.listed.forEach { visible?.add(it.id) }
+            }
         }
     }
 
@@ -98,6 +106,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         "delete_task" -> onExisting(call, visible, ActionCard.Action.DELETE) { before -> tools.delete(before.id) }
         "complete_task" -> onExisting(call, visible, ActionCard.Action.COMPLETE) { before -> tools.done(before.id) }
         "snooze_task" -> onExisting(call, visible, ActionCard.Action.SNOOZE) { before -> tools.snoozeFor(before.id, snooze(call.args["for"], message)) }
+        "show_tasks" -> show(call, message)
         else -> ActionCard(call, ActionCard.Action.UNKNOWN, null, "The app has no tool called \"${call.name}\".", null)
     }
 
@@ -122,6 +131,20 @@ class Agent(private val tools: Tools, private val clock: Clock) {
             is ToolResult.Ok -> ActionCard(call, action, result.task, null, Undo.Remove(result.task.id))
             is ToolResult.Refused -> ActionCard(call, action, null, result.reason, null)
         }
+    }
+
+    /** Lists the tasks due in the range the user's words name; nothing changes, so there is nothing to undo. */
+    private fun show(call: ToolCall, message: String?): ActionCard {
+        val action = ActionCard.Action.SHOW
+        val words = call.args["when"].orEmpty().trim()
+        val range = try {
+            if (words.lowercase() !in ALL_TASKS) copied(words, message, "the range")
+            WordReader.range(words, clock.now()) ?: throw Unreadable("Remind Me can't show tasks for '$words'.")
+        } catch (unreadable: Unreadable) {
+            return ActionCard(call, action, null, unreadable.message, null)
+        }
+        val listed = tools.list().filter { range.holds(it.due) }.sortedBy { it.due }
+        return ActionCard(call, action, null, null, null, listed, range.label)
     }
 
     /** Only what the call gives changes; everything else stays as the task has it. */
@@ -249,6 +272,8 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         private val NO_REPEAT = setOf("", "none", "once", "never", "no")
         /** What a model writes to take an early warning away. */
         private val NO_WARNING = setOf("", "none", "0", "no", "never", "[]")
+        /** What a model writes for every task; never the user's words for a range. */
+        private val ALL_TASKS = setOf("", "all", "everything")
         private val SUMMARY_DUE = DateTimeFormatter.ofPattern("EEE d MMM HH:mm", Locale.ENGLISH)
 
         private const val TASK_PROPERTIES = """
@@ -280,6 +305,10 @@ class Agent(private val tools: Tools, private val clock: Clock) {
               "id": {"type": "integer"},
               "for": {"type": "string", "description": "The user's own words for how long, copied from the message, like for an hour or until 5. Leave out for 10 minutes."}},
               "required": ["id"]}}},
+          {"type": "function", "function": {"name": "show_tasks",
+            "description": "Shows the user the tasks due in a range. Nothing changes.",
+            "parameters": {"type": "object", "properties": {
+              "when": {"type": "string", "description": "The user's own words for the range, copied from the message, like tomorrow, friday or this week. Leave out for all tasks."}}}}},
           {"type": "function", "function": {"name": "complete_task",
             "description": "Marks a task from the Tasks list as done.",
             "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}}}
@@ -299,6 +328,7 @@ class Agent(private val tools: Tools, private val clock: Clock) {
         - style is alarm only when the user says alarm, wake, wake me, or don't let me miss it. Otherwise leave it out.
         - To change, move, cancel or finish something that is already in Tasks, call update_task, delete_task or complete_task with its id. Do not create it again.
         - To be told again later about something that has already come round ("snooze it", "remind me again in an hour"), call snooze_task with its id; for is the user's own words for how long. To change when it is due, call update_task.
+        - To see what is coming ("what's on tomorrow", "show me this week", "what do I have"), call show_tasks; when is the user's own words for the range. Leave when out for everything.
         - If the message names nothing that could be a reminder, reply with the one word NONE.
         - The tasks and the conversation so far come after these rules. "it" and "that" mean the task the conversation was last about.
         """.trimIndent()

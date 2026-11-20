@@ -124,7 +124,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     }
 
     /** The tasks this conversation created, changed or showed: they stay in the task list whatever else is cut. */
-    private fun touched(): Set<Long> = history.flatMap { it.cards }.mapNotNull { it.task?.id }.toSet()
+    private fun touched(): Set<Long> = history.flatMap { it.cards }.flatMap { card -> listOfNotNull(card.task?.id) + card.listed.map { it.id } }.toSet()
 
     private fun counted(n: Int, one: String, many: String) = when (n) {
         0 -> null
@@ -256,6 +256,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     }
 
     private fun line(card: ActionCard): String {
+        if (card.action == ActionCard.Action.SHOW && card.went) return shown(card)
         val task = card.task
         if (!card.went || task == null) return "could not ${verb(card)}: ${card.refusal}"
         return when (card.action) {
@@ -264,8 +265,18 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
             ActionCard.Action.DELETE -> "deleted id ${task.id} ${agent.summary(task)}"
             ActionCard.Action.COMPLETE -> "marked id ${task.id} ${task.title} done"
             ActionCard.Action.SNOOZE -> "snoozed id ${task.id} ${task.title}"
+            ActionCard.Action.SHOW -> shown(card)
             ActionCard.Action.UNKNOWN -> "could not ${verb(card)}: ${card.refusal}"
         }
+    }
+
+    /** "showed 2 tasks for Friday: ids 4, 7", or "in all" for every task. */
+    private fun shown(card: ActionCard): String {
+        val range = if (card.range == "all") "in all" else "for ${card.range}"
+        val ids = card.listed.map { it.id }
+        if (ids.isEmpty()) return "showed no tasks $range"
+        val count = if (ids.size == 1) "1 task" else "${ids.size} tasks"
+        return "showed $count $range: ${if (ids.size == 1) "id" else "ids"} ${ids.joinToString(", ")}"
     }
 
     private fun verb(card: ActionCard) = when (card.action) {
@@ -274,6 +285,7 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
         ActionCard.Action.DELETE -> "delete"
         ActionCard.Action.COMPLETE -> "mark done"
         ActionCard.Action.SNOOZE -> "snooze"
+        ActionCard.Action.SHOW -> "show tasks"
         ActionCard.Action.UNKNOWN -> "run ${card.call.name}"
     }
 
