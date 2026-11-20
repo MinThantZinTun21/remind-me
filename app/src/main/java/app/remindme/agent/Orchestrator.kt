@@ -36,6 +36,21 @@ interface Talk : AutoCloseable {
     fun say(text: String, onText: (String) -> Unit = {}): ModelReply
 }
 
+/** One part of the context, exactly as the model read it, and about how many tokens it took. */
+data class ContextPart(val name: String, val text: String, val tokens: Int)
+
+/** What the model read and wrote for one message, for the context view. */
+data class ContextRecord(
+    val parts: List<ContextPart>,
+    /** Tokens the model read, as the runtime counted them; -1 when it could not say. */
+    val read: Int,
+    /** Tokens the model can hold. */
+    val size: Int,
+    val written: Int,
+    /** The reply exactly as the model wrote it. */
+    val output: String,
+)
+
 /** One message the owner sent and what came of it. See GLOSSARY.md. */
 data class Exchange(
     val words: String,
@@ -44,6 +59,7 @@ data class Exchange(
     val problem: String?,
     /** The model's reply as written; null when the model failed before replying. */
     val reply: ModelReply?,
+    val context: ContextRecord,
 )
 
 /**
@@ -55,33 +71,57 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
     private val history = mutableListOf<Exchange>()
 
     /** What the model reads before the next message. */
-    fun preface(): Preface {
-        val parts = listOfNotNull(
-            agent.rules(),
-            agent.taskList(tools.list().take(MAX_TASKS)),
-            conversation().takeIf { it.isNotEmpty() }?.let { "Conversation so far:\n$it" },
-        )
-        return Preface(parts.joinToString("\n\n"), Agent.TOOLS_JSON)
-    }
+    fun preface(): Preface = prefaceOf(prefaceParts())
+
+    private fun prefaceParts(): List<ContextPart> = listOfNotNull(
+        part("Instruction", agent.rules()),
+        part("Tools", Agent.TOOLS_JSON),
+        part("Tasks", agent.taskList(tools.list().take(MAX_TASKS))),
+        conversation().takeIf { it.isNotEmpty() }?.let { part("Conversation", "Conversation so far:\n$it") },
+    )
+
+    private fun prefaceOf(parts: List<ContextPart>) = Preface(
+        instruction = parts.filter { it.name in INSTRUCTION_PARTS }.joinToString("\n\n") { it.text },
+        tools = parts.single { it.name == "Tools" }.text,
+    )
 
     /** Has the model read the next message's preface while the owner types. */
     fun prepare() = model.prepare(preface())
 
     /** Sends the owner's [words] and returns what came of them. Blocks until the model has replied. */
     fun send(words: String, onText: (String) -> Unit = {}): Exchange {
+        val message = agent.userMessage(words)
+        val parts = prefaceParts() + part("Message", message)
         val exchange = try {
-            model.open(preface()).use { talk ->
-                val reply = talk.say(agent.userMessage(words), onText)
+            model.open(prefaceOf(parts)).use { talk ->
+                val reply = talk.say(message, onText)
                 val parsed = ReplyParser.parse(reply.text)
                 val cards = agent.act(parsed.calls)
-                Exchange(words, cards, parsed.problem ?: NOTHING_TO_DO.takeIf { cards.isEmpty() }, reply)
+                Exchange(words, cards, parsed.problem ?: NOTHING_TO_DO.takeIf { cards.isEmpty() }, reply, record(parts, reply))
             }
         } catch (failure: Exception) {
-            Exchange(words, emptyList(), "The model stopped: ${failure.message}", null)
+            Exchange(words, emptyList(), "The model stopped: ${failure.message}", null, record(parts, null))
         }
         history += exchange
         return exchange
     }
+
+    private fun record(parts: List<ContextPart>, reply: ModelReply?): ContextRecord {
+        val read = reply?.tokensInContext?.takeIf { it >= 0 }?.let { it - reply.tokensWritten } ?: -1
+        return ContextRecord(scaled(parts, read), read, model.contextTokens, reply?.tokensWritten ?: 0, reply?.text.orEmpty())
+    }
+
+    /** The estimated part sizes, scaled so that they add up to the [read] the runtime counted. */
+    private fun scaled(parts: List<ContextPart>, read: Int): List<ContextPart> {
+        val estimated = parts.sumOf { it.tokens }
+        if (read < 0 || estimated == 0) return parts
+        val sizes = parts.map { it.tokens.toLong() * read / estimated }.map(Long::toInt).toMutableList()
+        val biggest = sizes.indices.maxBy { sizes[it] }
+        sizes[biggest] += read - sizes.sum()
+        return parts.mapIndexed { i, part -> part.copy(tokens = sizes[i]) }
+    }
+
+    private fun part(name: String, text: String) = ContextPart(name, text, (text.length + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN)
 
     /** The owner left the agent screen or changed the model: the next message starts afresh. */
     fun endVisit() = history.clear()
@@ -119,5 +159,11 @@ class Orchestrator(private val agent: Agent, private val tools: Tools, private v
 
         /** More tasks than this do not fit beside the rules in the model's small context. */
         private const val MAX_TASKS = 15
+
+        /** About how many characters make a token, for sizing the parts of the context. */
+        private const val CHARS_PER_TOKEN = 4
+
+        /** The parts that make up the instruction, in the order the model reads them. */
+        private val INSTRUCTION_PARTS = setOf("Instruction", "Tasks", "Conversation")
     }
 }

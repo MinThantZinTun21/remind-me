@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import app.remindme.RemindMeApp
 import app.remindme.agent.ActionCard
 import app.remindme.agent.AgentEngine
+import app.remindme.agent.ContextRecord
 import app.remindme.agent.Orchestrator
 import app.remindme.core.DayRow
 import app.remindme.core.DeliveryStyle
@@ -93,6 +94,7 @@ private class ExchangeState(val text: String) {
     var cards by mutableStateOf<List<CardState>>(emptyList())
     var problem by mutableStateOf<String?>(null)
     var timing by mutableStateOf<String?>(null)
+    var context by mutableStateOf<ContextRecord?>(null)
     var finished by mutableStateOf(false)
 }
 
@@ -162,6 +164,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                 exchange.cards = done.cards.map(::CardState)
                 exchange.problem = done.problem
                 exchange.timing = done.reply?.let { "Took ${seconds(it.totalMs)} (first word after ${seconds(it.firstTokenMs)})." }
+                exchange.context = done.context
                 exchange.finished = true
                 state = ModelState.LOADING
                 load()
@@ -373,6 +376,7 @@ private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChan
         exchange.timing?.let {
             Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        exchange.context?.let { ContextView(it) }
     }
 }
 

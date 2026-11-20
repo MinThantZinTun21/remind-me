@@ -90,6 +90,39 @@ class OrchestratorTest {
     }
 
     @Test
+    fun `the context record lists every part as the model read it, in order, adding up to the exact total`() {
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        orchestrator.send("call mom thursday at 9")
+        model.replies += "NONE"
+
+        val record = orchestrator.send("thanks").context
+
+        assertEquals(listOf("Instruction", "Tools", "Tasks", "Conversation", "Message"), record.parts.map { it.name })
+        val preface = model.prefaces.last()
+        assertEquals(preface.instruction, record.parts.filter { it.name in setOf("Instruction", "Tasks", "Conversation") }.joinToString("\n\n") { it.text })
+        assertEquals(preface.tools, record.parts.single { it.name == "Tools" }.text)
+        assertEquals(model.said.last(), record.parts.last().text)
+        // The fake's exact count: what it read before the reply.
+        val read = model.count(preface.instruction) + model.count(preface.tools) + model.count(model.said.last())
+        assertEquals(read, record.read)
+        assertEquals(read, record.parts.sumOf { it.tokens })
+        assertEquals(model.count("NONE"), record.written)
+        assertEquals(4096, record.size)
+        assertEquals("NONE", record.output)
+    }
+
+    @Test
+    fun `part sizes are estimates at four characters a token when the runtime gives no count`() {
+        model.exact = false
+        model.replies += "NONE"
+
+        val record = orchestrator.send("hello").context
+
+        assertEquals(-1, record.read)
+        record.parts.forEach { assertEquals((it.text.length + 3) / 4, it.tokens) }
+    }
+
+    @Test
     fun `each message gets its own talk with the model, closed afterwards`() {
         model.replies += "NONE"
         model.replies += "NONE"
@@ -113,6 +146,9 @@ class FakeModel(override val contextTokens: Int = 4096) : ModelPort {
     /** Tokens as the fake counts them: one for every four characters. */
     var count: (String) -> Int = { (it.length + 3) / 4 }
 
+    /** False for a runtime that cannot count the tokens in its context. */
+    var exact = true
+
     override fun open(preface: Preface): Talk {
         prefaces += preface
         opened++
@@ -122,7 +158,7 @@ class FakeModel(override val contextTokens: Int = 4096) : ModelPort {
                 said += text
                 val answer = replies.removeFirstOrNull() ?: error("the fake model has no reply left for \"$text\"")
                 read += count(text) + count(answer)
-                return ModelReply(answer, tokensInContext = read, tokensWritten = count(answer))
+                return ModelReply(answer, tokensInContext = if (exact) read else -1, tokensWritten = count(answer))
             }
 
             override fun close() {
