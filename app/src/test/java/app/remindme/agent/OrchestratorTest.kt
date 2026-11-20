@@ -171,6 +171,20 @@ class OrchestratorTest {
     }
 
     @Test
+    fun `what the model reads in the background is what the next message opens with`() {
+        model.replies += reply(call("create_task", "title" to "Call mom", "due" to "2026-11-19T09:00"))
+        orchestrator.send("call mom thursday at 9")
+
+        orchestrator.prepare()
+        world.clock.local = at("2026-11-17T10:03")
+        model.replies += "NONE"
+        orchestrator.send("thanks")
+
+        assertTrue("Conversation so far:" in model.prepared.single().instruction)
+        assertEquals(model.prepared.single(), model.prefaces.last())
+    }
+
+    @Test
     fun `each message gets its own talk with the model, closed afterwards`() {
         model.replies += "NONE"
         model.replies += "NONE"
@@ -188,6 +202,7 @@ class FakeModel(override val contextTokens: Int = 4096) : ModelPort {
     val replies = ArrayDeque<String>()
     val prefaces = mutableListOf<Preface>()
     val said = mutableListOf<String>()
+    val prepared = mutableListOf<Preface>()
     var opened = 0
     var closed = 0
 
@@ -196,6 +211,10 @@ class FakeModel(override val contextTokens: Int = 4096) : ModelPort {
 
     /** False for a runtime that cannot count the tokens in its context. */
     var exact = true
+
+    override fun prepare(preface: Preface) {
+        prepared += preface
+    }
 
     override fun open(preface: Preface): Talk {
         prefaces += preface

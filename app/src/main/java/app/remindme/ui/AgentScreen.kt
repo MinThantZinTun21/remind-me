@@ -91,6 +91,8 @@ internal val EXAMPLES = listOf(
 /** One message the user sent and what came of it, as it stands on screen. */
 private class ExchangeState(val text: String) {
     var writing by mutableStateOf("")
+    /** Sent while the model was still reading the context: the message goes once it has. */
+    var waiting by mutableStateOf(false)
     var cards by mutableStateOf<List<CardState>>(emptyList())
     var problem by mutableStateOf<String?>(null)
     var timing by mutableStateOf<String?>(null)
@@ -155,10 +157,12 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
         val text = typed.trim()
         if (text.isEmpty() || state !in CAN_SEND) return
         val exchange = ExchangeState(text)
+        exchange.waiting = state == ModelState.LOADING
         exchanges += exchange
         typed = ""
         state = ModelState.WORKING
         worker.execute {
+            main.post { exchange.waiting = false }
             val done = talk.send(text) { so -> main.post { exchange.writing = so } }
             main.post {
                 exchange.cards = done.cards.map(::CardState)
@@ -199,7 +203,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                                 ModelState.MISSING -> "No model chosen"
                                 ModelState.LOADING -> "Getting ready. You can already send."
                                 ModelState.READY -> "Ready"
-                                ModelState.WORKING -> "Working…"
+                                ModelState.WORKING -> if (exchanges.lastOrNull()?.waiting == true) "Getting ready…" else "Working…"
                                 ModelState.FAILED -> "The model did not load"
                             },
                             style = MaterialTheme.typography.bodySmall,
@@ -361,7 +365,7 @@ private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChan
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 Text(
-                    "Working it out…",
+                    if (exchange.waiting) "Getting ready…" else "Working it out…",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 12.dp),
