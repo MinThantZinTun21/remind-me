@@ -62,6 +62,54 @@ class AnswersTest {
     }
 
     @Test
+    fun `a snooze of a stated length brings a fired occurrence back then, without moving its due time`() {
+        val (world, task) = worldWithTaskDueAt3pm()
+        world.advanceTo("2026-11-17T15:02")
+
+        world.tools.snoozeFor(task.id, java.time.Duration.ofHours(1)).task()
+
+        assertEquals(listOf(Fire(task.id, FireKind.SNOOZE, at("2026-11-17T16:02"))), world.scheduler.pending())
+        assertEquals(at("2026-11-17T15:00"), world.tools.list().single().due)
+    }
+
+    @Test
+    fun `a snooze is refused for an occurrence not yet due, past a day, or past the next occurrence`() {
+        val (world, task) = worldWithTaskDueAt3pm()
+        assertEquals(
+            ToolResult.Refused("Call the bank isn't due yet. To move it, say when."),
+            world.tools.snoozeFor(task.id, java.time.Duration.ofMinutes(10)),
+        )
+        world.advanceTo("2026-11-17T15:02")
+        assertEquals(
+            ToolResult.Refused("That is longer than a snooze. To move Call the bank, say when."),
+            world.tools.snoozeFor(task.id, java.time.Duration.ofHours(25)),
+        )
+
+        val gym = world.tools.create(TaskDetails("Gym", at("2026-11-17T16:00"), repeat = RepeatRule.everyDays(1))).task()
+        world.advanceTo("2026-11-17T16:05")
+        assertEquals(
+            ToolResult.Refused("That is longer than a snooze. To move Gym, say when."),
+            world.tools.snoozeFor(gym.id, java.time.Duration.ofHours(24)),
+        )
+        assertEquals(at("2026-11-17T16:00"), world.tools.list().first { it.id == gym.id }.due)
+    }
+
+    @Test
+    fun `the tasks due in a range are those from its start up to but not at its end, soonest first, and none move`() {
+        val world = World(now = "2026-11-17T08:00")
+        val late = world.tools.create(TaskDetails("Late", at("2026-11-17T09:00"))).task()
+        world.advanceTo("2026-11-17T10:00")
+        val friday = world.tools.create(TaskDetails("Friday", at("2026-11-20T09:00"))).task()
+        val early = world.tools.create(TaskDetails("Early Friday", at("2026-11-20T00:00"))).task()
+        world.tools.create(TaskDetails("Saturday", at("2026-11-21T00:00")))
+
+        assertEquals(listOf(early.id, friday.id), world.tools.dueBetween(at("2026-11-20T00:00"), at("2026-11-21T00:00")).map { it.id })
+        assertEquals(listOf(late.id), world.tools.dueBetween(null, at("2026-11-17T10:00")).map { it.id })
+        assertEquals(4, world.tools.dueBetween(null, null).size)
+        assertEquals(at("2026-11-20T09:00"), world.tools.list().first { it.id == friday.id }.due)
+    }
+
+    @Test
     fun `snooze can be used again and again`() {
         val (world, task) = worldWithTaskDueAt3pm()
         world.advanceTo("2026-11-17T15:00")

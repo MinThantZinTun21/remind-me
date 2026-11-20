@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Where the owner downloads, chooses and deletes the model the agent uses. Downloads go through Android's
+ * Where the user downloads, chooses and deletes the model the agent uses. Downloads go through Android's
  * download service over Wi-Fi only, so they carry on with this screen, or the app, closed.
  */
 @Composable
@@ -222,11 +222,20 @@ private fun InstalledRow(model: Models.Installed, offer: ModelOffer?, inUse: Boo
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (offer == null || !offer.tried) Note("Not tried with Remind Me: the agent may not understand its replies.")
+        if (!model.readable) {
+            Text(
+                "Remind Me can't read this model's replies yet",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        } else if (offer == null || !offer.tried) {
+            Note("Not tried with Remind Me: the agent may not understand its replies.")
+        }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
             if (inUse) {
                 Text("In use", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            } else {
+            } else if (model.readable) {
                 Button(onClick = onUse) { Text("Use this model") }
             }
             Spacer(Modifier.weight(1f))

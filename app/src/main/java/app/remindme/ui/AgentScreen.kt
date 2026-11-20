@@ -2,7 +2,12 @@ package app.remindme.ui
 
 import android.os.Handler
 import android.os.Looper
+import java.util.concurrent.Executors
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.FilledTonalButton
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -24,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
@@ -66,7 +72,8 @@ import androidx.compose.ui.unit.dp
 import app.remindme.RemindMeApp
 import app.remindme.agent.ActionCard
 import app.remindme.agent.AgentEngine
-import app.remindme.agent.ReplyParser
+import app.remindme.agent.ContextRecord
+import app.remindme.agent.Orchestrator
 import app.remindme.core.DayRow
 import app.remindme.core.DeliveryStyle
 import app.remindme.core.Task
@@ -86,12 +93,17 @@ internal val EXAMPLES = listOf(
     "Meeting with the bank Friday 3 pm, warn me 30 minutes before",
 )
 
-/** One message the user sent and what came of it. */
-private class Exchange(val text: String) {
+/** One message the user sent and what came of it, as it stands on screen. */
+private class ExchangeState(val text: String) {
     var writing by mutableStateOf("")
+    /** Sent while the model was still reading the context: the message goes once it has. */
+    var waiting by mutableStateOf(false)
     var cards by mutableStateOf<List<CardState>>(emptyList())
     var problem by mutableStateOf<String?>(null)
     var timing by mutableStateOf<String?>(null)
+    var context by mutableStateOf<ContextRecord?>(null)
+    /** What the model is reading for this message, known before it replies. */
+    var input by mutableStateOf<ContextRecord?>(null)
     var finished by mutableStateOf(false)
 }
 
@@ -101,6 +113,8 @@ private class Exchange(val text: String) {
  */
 private class CardState(val card: ActionCard) {
     var task by mutableStateOf(card.task)
+    /** For a list card, the tasks as they now are. */
+    var listed by mutableStateOf(card.listed)
     val dayChanges = mutableStateListOf<Task>()
     var undone by mutableStateOf(false)
     var note by mutableStateOf<String?>(null)
@@ -114,23 +128,30 @@ private enum class ModelState { MISSING, LOADING, READY, WORKING, FAILED }
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit, onModels: () -> Unit, onClose: () -> Unit) {
+fun AgentScreen(app: RemindMeApp, draft: String = "", onModels: () -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val main = remember { Handler(Looper.getMainLooper()) }
     val modelFile = remember { AgentEngine.modelFile(context) }
     val engine = remember { modelFile?.let { AgentEngine(it, context.cacheDir) } }
+    val orchestrator = remember { engine?.let { Orchestrator(app.agent, app.tools, it) } }
+    // The model is asked one thing at a time, off the main thread.
+    val worker = remember { Executors.newSingleThreadExecutor { Thread(it, "agent-model").apply { isDaemon = true } } }
     var state by remember { mutableStateOf(if (engine == null) ModelState.MISSING else ModelState.LOADING) }
     var loadNote by remember { mutableStateOf<String?>(null) }
     var typed by remember { mutableStateOf(draft) }
     val field = remember { FocusRequester() }
-    val exchanges = remember { mutableStateListOf<Exchange>() }
+    val exchanges = remember { mutableStateListOf<ExchangeState>() }
     val list = rememberLazyListState()
+    // A task opened from a card is edited over this screen, so the visit and its conversation go on.
+    var editing by remember { mutableStateOf<Long?>(null) }
 
     fun load() {
-        val model = engine ?: return
+        // After the screen has gone, a message finishing late has no model left to get ready.
+        if (orchestrator == null || worker.isShutdown) return
         // A message sent while the model is still getting ready is already waiting behind this load.
         if (state != ModelState.WORKING) state = ModelState.LOADING
-        model.load(app.agent.systemInstruction()) { result ->
+        worker.execute {
+            val result = runCatching { orchestrator.prepare() }
             main.post {
                 result.onSuccess {
                     loadNote = null
@@ -144,45 +165,31 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
     }
 
     fun send() {
-        val model = engine ?: return
+        if (orchestrator == null) return
         val text = typed.trim()
         if (text.isEmpty() || state !in CAN_SEND) return
-        val exchange = Exchange(text)
+        val exchange = ExchangeState(text)
+        exchange.waiting = state == ModelState.LOADING
         exchanges += exchange
         typed = ""
         state = ModelState.WORKING
-        model.ask(
-            app.agent.systemInstruction(),
-            app.agent.userMessage(text),
-            object : AgentEngine.Listener {
-                override fun onText(text: String) {
-                    main.post { exchange.writing = text }
-                }
-
-                override fun onDone(reply: AgentEngine.Reply) {
-                    main.post {
-                        val parsed = ReplyParser.parse(reply.text)
-                        exchange.cards = app.agent.act(parsed.calls).map(::CardState)
-                        // The agent answers with tool calls only; anything else it writes is not shown.
-                        exchange.problem = parsed.problem
-                            ?: "The agent found nothing to remind you of in that. Say what it is and when.".takeIf { parsed.calls.isEmpty() }
-                        exchange.timing = "Took ${seconds(reply.totalMs)} (first word after ${seconds(reply.firstTokenMs)})."
-                        exchange.finished = true
-                        state = ModelState.LOADING
-                        load()
-                    }
-                }
-
-                override fun onError(message: String) {
-                    main.post {
-                        exchange.problem = message
-                        exchange.finished = true
-                        state = ModelState.LOADING
-                        load()
-                    }
-                }
-            },
-        )
+        worker.execute {
+            main.post { exchange.waiting = false }
+            val done = orchestrator.send(
+                text,
+                onInput = { input -> main.post { exchange.input = input } },
+                onText = { written -> main.post { exchange.writing = written } },
+            )
+            main.post {
+                exchange.cards = done.cards.map(::CardState)
+                exchange.problem = done.problem
+                exchange.timing = done.reply?.let { "Took ${seconds(it.totalMs)} (first word after ${seconds(it.firstTokenMs)})." }
+                exchange.context = done.context
+                exchange.finished = true
+                state = ModelState.LOADING
+                load()
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -190,10 +197,45 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
         // The screen is for typing: the keyboard is up as soon as it opens.
         if (engine != null) runCatching { field.requestFocus() }
     }
-    DisposableEffect(Unit) { onDispose { engine?.close() } }
-    LaunchedEffect(exchanges.size, exchanges.lastOrNull()?.finished) {
-        if (exchanges.isNotEmpty()) list.animateScrollToItem(exchanges.size - 1)
+    DisposableEffect(Unit) {
+        onDispose {
+            // Leaving the screen ends the visit, its conversation and the model.
+            worker.execute { orchestrator?.endVisit(); engine?.close() }
+            worker.shutdown()
+        }
     }
+    // The newest exchange the list has scrolled to: closing a task the user opened keeps their place.
+    var scrolledTo by remember { mutableStateOf<Pair<Int, Boolean>?>(null) }
+    LaunchedEffect(exchanges.size, exchanges.lastOrNull()?.finished, editing) {
+        val newest = exchanges.size to (exchanges.lastOrNull()?.finished == true)
+        // The list is not drawn while a task is open over it; it catches up once the screen is back.
+        if (editing == null && exchanges.isNotEmpty() && newest != scrolledTo) {
+            scrolledTo = newest
+            list.animateScrollToItem(exchanges.size - 1)
+        }
+    }
+
+    editing?.let { taskId ->
+        fun back() {
+            editing = null
+            // The cards show the task as it now is, and the model reads the changed list again.
+            val now = app.tools.list().firstOrNull { it.id == taskId }
+            for (card in exchanges.flatMap { it.cards }) {
+                if (card.task?.id == taskId && now != null) card.task = now
+                // A task moved out of the card's range, or deleted, leaves it; the rest stay soonest first.
+                val range = card.card.range
+                if (range != null && card.listed.any { it.id == taskId }) {
+                    val shown = card.listed.map { it.id }.toSet()
+                    card.listed = app.tools.dueBetween(range.from, range.to).filter { it.id in shown }
+                }
+            }
+            if (state == ModelState.READY || state == ModelState.LOADING) load()
+        }
+        BackHandler { back() }
+        TaskFormScreen(app, taskId, onClose = ::back)
+        return
+    }
+    val onEditTask: (Long) -> Unit = { editing = it }
 
     Scaffold(
         topBar = {
@@ -206,7 +248,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                                 ModelState.MISSING -> "No model chosen"
                                 ModelState.LOADING -> "Getting ready. You can already send."
                                 ModelState.READY -> "Ready"
-                                ModelState.WORKING -> "Working…"
+                                ModelState.WORKING -> if (exchanges.lastOrNull()?.waiting == true) "Getting ready…" else "Working…"
                                 ModelState.FAILED -> "The model did not load"
                             },
                             style = MaterialTheme.typography.bodySmall,
@@ -251,9 +293,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                                 CardChange.Undo -> {
                                     val before = card.dayChanges.lastOrNull()
                                     if (before == null) {
-                                        app.agent.undo(card.card)
-                                        card.undone = true
-                                        null
+                                        orchestrator?.undo(card.card).also { if (it is ToolResult.Ok) card.undone = true }
                                     } else {
                                         app.dayButtons.undo(before).also { if (it is ToolResult.Ok) card.dayChanges.removeAt(card.dayChanges.lastIndex) }
                                     }
@@ -270,6 +310,7 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                             if (result !is ToolResult.Refused && (state == ModelState.READY || state == ModelState.LOADING)) load()
                         },
                         onEditTask = onEditTask,
+                        onOpenList = onClose,
                     )
                 }
                 if (state == ModelState.FAILED) {
@@ -301,11 +342,18 @@ fun AgentScreen(app: RemindMeApp, draft: String = "", onEditTask: (Long) -> Unit
                         maxLines = 4,
                         modifier = Modifier.weight(1f).focusRequester(field),
                     )
-                    FilledIconButton(
-                        onClick = ::send,
-                        enabled = state in CAN_SEND && typed.isNotBlank(),
-                        modifier = Modifier.padding(start = 8.dp).size(56.dp),
-                    ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send") }
+                    if (state == ModelState.WORKING && exchanges.lastOrNull()?.waiting == true) {
+                        // Sent while the model was still reading: it goes as soon as the reading is done.
+                        FilledTonalButton(onClick = {}, enabled = false, modifier = Modifier.padding(start = 8.dp).heightIn(min = 56.dp)) {
+                            Text("Getting ready…")
+                        }
+                    } else {
+                        FilledIconButton(
+                            onClick = ::send,
+                            enabled = state in CAN_SEND && typed.isNotBlank(),
+                            modifier = Modifier.padding(start = 8.dp).size(56.dp),
+                        ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send") }
+                    }
                 }
             }
         }
@@ -349,7 +397,7 @@ internal fun Examples(onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun ExchangeView(exchange: Exchange, onChange: (CardState, CardChange) -> Unit, onEditTask: (Long) -> Unit) {
+private fun ExchangeView(exchange: ExchangeState, onChange: (CardState, CardChange) -> Unit, onEditTask: (Long) -> Unit, onOpenList: () -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // What the user said, on the right, as in a conversation.
         Surface(
@@ -368,21 +416,25 @@ private fun ExchangeView(exchange: Exchange, onChange: (CardState, CardChange) -
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 Text(
-                    "Working it out…",
+                    if (exchange.waiting) "Getting ready…" else "Working it out…",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 12.dp),
                 )
             }
+            // While the model works: what it is reading, and its reply as it is written.
+            exchange.input?.let { ContextView(it, writing = exchange.writing) }
             return@Column
         }
         for (card in exchange.cards) {
-            ActionCardView(card, onChange = { onChange(card, it) }, onEditTask = onEditTask)
+            if (card.card.lists) ListCard(card, onEditTask, onOpenList)
+            else ActionCardView(card, onChange = { onChange(card, it) }, onEditTask = onEditTask)
         }
         exchange.problem?.let { Problem(it) }
         exchange.timing?.let {
             Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        exchange.context?.let { ContextView(it) }
     }
 }
 
@@ -416,6 +468,11 @@ private fun ActionCardView(state: CardState, onChange: (CardChange) -> Unit, onE
             state.task?.let { task ->
                 Text(task.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 10.dp))
                 Text(Times.dateAndTime(context, task.due), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 2.dp))
+                val back = task.snoozedUntil?.takeIf { card.action == ActionCard.Action.SNOOZE && card.went && !undone }
+                back?.let {
+                    val at = java.time.LocalDateTime.ofInstant(it, java.time.ZoneId.systemDefault())
+                    Text("Back at ${Times.dateAndTime(context, at)}", style = MaterialTheme.typography.bodyMedium, color = accent, modifier = Modifier.padding(top = 2.dp))
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -436,6 +493,58 @@ private fun ActionCardView(state: CardState, onChange: (CardChange) -> Unit, onE
                     TextButton(onClick = { onChange(CardChange.Undo) }) { Text(if (state.dayChanges.isEmpty()) "Undo" else "Undo day change") }
                     val task = state.task
                     if (task != null && card.action in EDITABLE) TextButton(onClick = { onEditTask(task.id) }) { Text("Edit") }
+                }
+            }
+        }
+    }
+}
+
+/** The tasks a show_tasks call lists: each opens to edit, and a long list ends with a way to the whole list. */
+@Composable
+private fun ListCard(state: CardState, onEditTask: (Long) -> Unit, onOpenList: () -> Unit) {
+    val card = state.card
+    val context = LocalContext.current
+    val colors = MaterialTheme.colorScheme
+    val all = card.range?.all == true
+    val range = if (all) "All tasks" else card.range?.label.orEmpty()
+    val count = state.listed.size
+    Card(
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = if (count > LISTED_ROWS) 4.dp else 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.DateRange, contentDescription = null, tint = colors.primary, modifier = Modifier.size(20.dp))
+                Text(
+                    when (count) {
+                        0 -> if (all) "No tasks" else "No tasks for $range"
+                        1 -> "$range: 1 task"
+                        else -> "$range: $count tasks"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.primary,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            for (task in state.listed.take(LISTED_ROWS)) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(onClickLabel = "Edit ${task.title}") { onEditTask(task.id) }
+                        .padding(vertical = 10.dp),
+                ) {
+                    Text(task.title, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        listOfNotNull(Times.dateAndTime(context, task.due), task.repeat.inWords(task.firstDue)).joinToString(" · "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+            }
+            if (count > LISTED_ROWS) {
+                TextButton(onClick = onOpenList, modifier = Modifier.align(Alignment.End)) {
+                    Text("and ${count - LISTED_ROWS} more, open the list")
                 }
             }
         }
@@ -491,6 +600,8 @@ private fun Problem(text: String) {
 }
 
 private val CAN_SEND = setOf(ModelState.READY, ModelState.LOADING)
+/** How many tasks a list card shows before it points to the whole list. */
+private const val LISTED_ROWS = 10
 private val EDITABLE = setOf(ActionCard.Action.CREATE, ActionCard.Action.UPDATE)
 
 private fun ActionCard.icon(): ImageVector = when {
@@ -511,6 +622,8 @@ private fun ActionCard.heading(undone: Boolean): String {
         ActionCard.Action.UPDATE -> if (went) "Changed" else "Could not change this"
         ActionCard.Action.DELETE -> if (went) "Deleted" else "Could not delete this"
         ActionCard.Action.COMPLETE -> if (went) "Marked done" else "Could not mark this done"
+        ActionCard.Action.SNOOZE -> if (went) "Snoozed" else "Could not snooze this"
+        ActionCard.Action.SHOW -> if (went) "Showed tasks" else "Could not show tasks"
         ActionCard.Action.UNKNOWN -> "Did nothing"
     }
     return if (undone) "$did, then undone" else did
